@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+firebase-service-account.json
+backend/local_db/*.db
+backend/model/*.joblib
+backend/model/*.jobllb
+node_modules/
