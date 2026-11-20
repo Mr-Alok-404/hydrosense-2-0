@@ -5,8 +5,16 @@ import requests
 _last_alert_time = 0.0
 
 
-def send_telegram_alert(reading: dict, cooldown_seconds: int = 0) -> bool:
+def send_telegram_alert(
+    reading: dict,
+    cooldown_seconds: int = 0,
+    enabled: bool = True,
+) -> bool:
     global _last_alert_time
+
+    if not enabled:
+        print("Telegram alert skipped: disabled via dynamic settings.")
+        return False
 
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -30,9 +38,9 @@ def send_telegram_alert(reading: dict, cooldown_seconds: int = 0) -> bool:
     message = (
         f"🚨 *HydroSense 2.0 Alert: {status} WATER*\n"
         f"• *Device:* `{device_id}`\n"
-        f"• *pH:* `{ph}` (Safe: 6.5 – 8.5)\n"
-        f"• *TDS:* `{tds}` ppm (Safe: ≤ 500 ppm)\n"
-        f"• *Turbidity:* `{turb}` NTU (Safe: ≤ 5.0 NTU)\n"
+        f"• *pH:* `{ph}`\n"
+        f"• *TDS:* `{tds}` ppm\n"
+        f"• *Turbidity:* `{turb}` NTU\n"
         f"• *Temperature:* `{temp}` °C\n"
         f"🔗 *Live Dashboard:* {dash_url}"
     )

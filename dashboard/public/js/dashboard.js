@@ -1,9 +1,33 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const MAX_STALE_MS = 30000; // Device marked offline if no reading within 30 seconds
 
     // Global State
-    let currentData = { temp: 0, ph: 7.0, tds: 300, turb: 1.0, status: 'POTABLE', conf: 96 };
+    let activeConfig = {
+        minPh: 6.5,
+        maxPh: 8.5,
+        maxTds: 500,
+        maxTurb: 5.0,
+        telegramEnabled: true
+    };
+    let currentData = {
+        temp: null,
+        ph: null,
+        tds: null,
+        turb: null,
+        status: 'WAITING',
+        conf: null,
+        timestampMs: null,
+        timestamp: null,
+        data_source: '--'
+    };
     let historyCache = [];
     let lastProcessedTimestamp = null;
+
+    // Footer Year
+    const yearEl = document.getElementById('copyrightYear');
+    if (yearEl) {
+        yearEl.innerText = String(new Date().getFullYear());
+    }
 
     // 1. Mobile Menu Toggle
     const mobileBtn = document.getElementById('mobileMenuBtn');
@@ -28,8 +52,11 @@ document.addEventListener('DOMContentLoaded', () => {
             item.classList.add('active');
 
             const tabName = item.innerText.trim();
+            const isOnlineNow = isDeviceOnline();
+            const badgeClass = isOnlineNow ? 'badge' : 'badge offline-badge';
+            const badgeText = isOnlineNow ? 'Live' : 'Offline';
             const titleHtml = tabName.includes('Dashboard')
-                ? `${tabName} <span class="badge" id="liveBadge">Live</span>`
+                ? `${tabName} <span class="${badgeClass}" id="liveBadge">${badgeText}</span>`
                 : tabName;
             document.getElementById('pageTitle').innerHTML = titleHtml;
 
@@ -41,6 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (targetId === 'trends-view') renderTrendsChart();
             if (targetId === 'alerts-view') renderAlertsTable();
+            if (targetId === 'devices-view') syncDevicePresenceUI();
 
             [mainChart, historyChart].forEach(c => { if (c) c.resize(); });
             if (window.innerWidth <= 768 && sidebar) sidebar.classList.remove('open');
@@ -85,7 +113,52 @@ document.addEventListener('DOMContentLoaded', () => {
         [mainChart, wqiDoughnut, miniTemp, miniPh, miniTds, miniTurb, historyChart].forEach(c => { if (c) c.update(); });
     });
 
-    // 5. Chart Setups (Initialized with null so no flat 0-line appears)
+    // 5. Device Online / Offline Presence Based on Timestamp Freshness
+    function isDeviceOnline() {
+        if (!currentData.timestampMs) return false;
+        return (Date.now() - currentData.timestampMs) <= MAX_STALE_MS;
+    }
+
+    function syncDevicePresenceUI() {
+        const online = isDeviceOnline();
+        const liveBadge = document.getElementById('liveBadge');
+        if (liveBadge) {
+            liveBadge.className = online ? 'badge' : 'badge offline-badge';
+            liveBadge.innerText = online ? 'Live' : 'Offline';
+        }
+
+        const devBadge = document.getElementById('deviceStatusBadge');
+        const lastSeenEl = document.getElementById('deviceLastSeen');
+        const connNoteEl = document.getElementById('deviceConnectionNote');
+        const srcEl = document.getElementById('deviceDataSource');
+
+        if (devBadge) {
+            devBadge.className = online ? 'status-badge bg-normal ml-auto' : 'status-badge bg-danger ml-auto';
+            devBadge.innerText = online ? 'Online' : 'Offline';
+        }
+        if (lastSeenEl) {
+            lastSeenEl.innerText = currentData.timestamp
+                ? new Date(currentData.timestamp).toLocaleString()
+                : 'Never';
+        }
+        if (connNoteEl) {
+            if (!currentData.timestampMs) {
+                connNoteEl.innerText = 'No telemetry received yet';
+            } else if (online) {
+                connNoteEl.innerText = 'Active heartbeat within 30s';
+            } else {
+                const secAgo = Math.round((Date.now() - currentData.timestampMs) / 1000);
+                connNoteEl.innerText = `Disconnected (last seen ${secAgo}s ago)`;
+            }
+        }
+        if (srcEl) {
+            srcEl.innerText = currentData.data_source || '--';
+        }
+    }
+
+    setInterval(syncDevicePresenceUI, 5000);
+
+    // 6. Chart Setups
     Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
     const hideScales = { x: { display: false }, y: { display: false } };
     const miniChartOpts = {
@@ -147,12 +220,12 @@ document.addEventListener('DOMContentLoaded', () => {
         type: 'doughnut',
         data: {
             labels: ['Safe', 'Unsafe'],
-            datasets: [{ data: [96, 4], backgroundColor: ['#22c55e', '#334155'], borderWidth: 0, cutout: '80%', circumference: 360, rotation: 270 }]
+            datasets: [{ data: [0, 100], backgroundColor: ['#22c55e', '#334155'], borderWidth: 0, cutout: '80%', circumference: 360, rotation: 270 }]
         },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
     });
 
-    // Trends Bar Chart (Powered by Firebase historyCache)
+    // Trends Chart (Powered by Firebase historyCache)
     let currentTrendPeriod = '1W';
     const ctxHist = document.getElementById('historyChart').getContext('2d');
     const historyChart = new Chart(ctxHist, {
@@ -164,15 +237,23 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderTrendsChart() {
         if (!historyCache.length) return;
         const metric = document.getElementById('trendMetricSelect').value;
-        const sliceCount = currentTrendPeriod === '1D' ? 10 : currentTrendPeriod === '1W' ? 20 : 30;
+        const sliceCount = currentTrendPeriod === '1D' ? 12 : currentTrendPeriod === '1W' ? 25 : 50;
         const subset = historyCache.slice(-sliceCount);
+
+        const colorMap = {
+            ph: '#a855f7',
+            tds: '#f59e0b',
+            turbidity: '#10b981',
+            temp: '#0ea5e9'
+        };
 
         historyChart.data.labels = subset.map(item => {
             const d = new Date(item.timestamp);
             return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         });
+        historyChart.data.datasets[0].label = metric.toUpperCase();
         historyChart.data.datasets[0].data = subset.map(item => item[metric]);
-        historyChart.data.datasets[0].backgroundColor = metric === 'ph' ? '#a855f7' : '#f59e0b';
+        historyChart.data.datasets[0].backgroundColor = colorMap[metric] || '#0ea5e9';
         historyChart.update();
     }
 
@@ -187,43 +268,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('trendMetricSelect').addEventListener('change', renderTrendsChart);
 
-    // Alerts Table (Generated dynamically from unsafe Firebase readings)
+    // Alerts Table (Generated dynamically using activeConfig thresholds)
     function renderAlertsTable() {
         const tbody = document.getElementById('alertsTableBody');
+        const botLabel = document.getElementById('alertsBotStatusLabel');
+        if (botLabel) {
+            botLabel.innerText = activeConfig.telegramEnabled ? 'Enabled' : 'Disabled';
+            botLabel.style.color = activeConfig.telegramEnabled ? 'var(--accent-success)' : 'var(--accent-warning)';
+        }
         if (!tbody) return;
-        const unsafeItems = historyCache.filter(item => item.status !== 'POTABLE').reverse();
+
+        const unsafeItems = historyCache.filter(item => {
+            const phBad = item.ph < activeConfig.minPh || item.ph > activeConfig.maxPh;
+            const tdsBad = item.tds > activeConfig.maxTds;
+            const turbBad = item.turbidity > activeConfig.maxTurb;
+            return item.status !== 'POTABLE' || phBad || tdsBad || turbBad;
+        }).reverse();
 
         if (unsafeItems.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4">No threshold violations recorded yet. Water quality is within safe limits.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4">No threshold violations recorded under current BIS rules.</td></tr>';
             return;
         }
 
         tbody.innerHTML = unsafeItems.map(item => {
-            let trigger = 'Parameter Violation';
-            let actual = '';
-            let threshold = '';
+            let trigger = 'Classification Alert';
+            let actual = `pH ${item.ph}, TDS ${item.tds}, Turb ${item.turbidity}`;
+            let limitStr = `pH ${activeConfig.minPh}-${activeConfig.maxPh}, TDS <=${activeConfig.maxTds}, Turb <=${activeConfig.maxTurb}`;
             let badgeClass = 'bg-warning';
 
-            if (item.ph < 6.5 || item.ph > 8.5) {
-                trigger = 'Critical pH';
+            if (item.ph < activeConfig.minPh || item.ph > activeConfig.maxPh) {
+                trigger = 'pH Out of Range';
                 actual = `${item.ph} pH`;
-                threshold = '6.5 - 8.5 pH';
+                limitStr = `${activeConfig.minPh} - ${activeConfig.maxPh} pH`;
                 badgeClass = 'bg-danger';
-            } else if (item.tds >= 500) {
+            } else if (item.tds > activeConfig.maxTds) {
                 trigger = 'High TDS';
                 actual = `${item.tds} ppm`;
-                threshold = '< 500 ppm';
-            } else if (item.turbidity >= 5.0) {
+                limitStr = `<= ${activeConfig.maxTds} ppm`;
+            } else if (item.turbidity > activeConfig.maxTurb) {
                 trigger = 'High Turbidity';
                 actual = `${item.turbidity} NTU`;
-                threshold = '< 5.0 NTU';
+                limitStr = `<= ${activeConfig.maxTurb} NTU`;
             }
 
             const timeLabel = new Date(item.timestamp).toLocaleString();
             return `<tr>
                 <td>${timeLabel}</td>
                 <td><span class="status-badge ${badgeClass}">${trigger}</span></td>
-                <td>Actual: ${actual} | Limit: ${threshold}</td>
+                <td>Actual: ${actual} | Limit: ${limitStr}</td>
                 <td><i class="fas fa-database icon-cyan"></i> Logged in Firebase</td>
             </tr>`;
         }).join('');
@@ -235,10 +327,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusEl = el.querySelector('.kpi-status');
         if (isSafe) {
             statusEl.className = 'kpi-status status-normal';
-            statusEl.innerText = 'Safe (Truth Value)';
+            statusEl.innerText = 'Within Safe Limit';
         } else {
             statusEl.className = 'kpi-status status-critical';
-            statusEl.innerText = trigger ? `Critical: ${trigger}` : 'Unsafe';
+            statusEl.innerText = trigger ? `Alert: ${trigger}` : 'Out of Limit';
         }
     }
 
@@ -282,41 +374,46 @@ document.addEventListener('DOMContentLoaded', () => {
             tds: data.tds,
             turb: data.turbidity,
             status: data.status,
-            conf: data.confidence
+            conf: data.confidence,
+            timestampMs: data.timestampMs,
+            timestamp: data.timestamp,
+            data_source: data.data_source
         };
 
-        // KPI Values
         document.getElementById('val-temp').innerText = data.temp;
         document.getElementById('val-ph').innerText = data.ph;
         document.getElementById('val-tds').innerText = data.tds;
         document.getElementById('val-turb').innerText = data.turbidity;
 
-        // WQI / ML Score Gauge
         document.getElementById('wqiScoreVal').innerText = `${data.confidence}%`;
         const wqiLabel = document.getElementById('wqiLabelTxt');
         wqiLabel.innerText = data.status;
 
-        if (data.status === 'POTABLE') {
+        const phOk = data.ph >= activeConfig.minPh && data.ph <= activeConfig.maxPh;
+        const tdsOk = data.tds <= activeConfig.maxTds;
+        const turbOk = data.turbidity <= activeConfig.maxTurb;
+
+        if (data.status === 'POTABLE' && phOk && tdsOk && turbOk) {
             wqiLabel.style.color = 'var(--accent-success)';
             wqiDoughnut.data.datasets[0].backgroundColor = ['#22c55e', '#334155'];
-            wqiDoughnut.data.datasets[0].data = [data.confidence, 100 - data.confidence];
+            wqiDoughnut.data.datasets[0].data = [data.confidence, Math.max(0, 100 - data.confidence)];
             ['card-temp', 'card-ph', 'card-tds', 'card-turb'].forEach(id => updateKpiStatus(id, true));
         } else {
             wqiLabel.style.color = 'var(--accent-danger)';
             wqiDoughnut.data.datasets[0].backgroundColor = ['#ef4444', '#334155'];
-            wqiDoughnut.data.datasets[0].data = [data.confidence, 100 - data.confidence];
+            wqiDoughnut.data.datasets[0].data = [data.confidence, Math.max(0, 100 - data.confidence)];
 
             updateKpiStatus('card-temp', true);
-            updateKpiStatus('card-ph', (data.ph >= 6.5 && data.ph <= 8.5), 'pH out of bounds');
-            updateKpiStatus('card-tds', (data.tds < 500), 'TDS >= 500 ppm');
-            updateKpiStatus('card-turb', (data.turbidity < 5.0), 'Turbidity >= 5.0 NTU');
+            updateKpiStatus('card-ph', phOk, `pH ${activeConfig.minPh}-${activeConfig.maxPh}`);
+            updateKpiStatus('card-tds', tdsOk, `TDS <=${activeConfig.maxTds}`);
+            updateKpiStatus('card-turb', turbOk, `Turb <=${activeConfig.maxTurb}`);
         }
         wqiDoughnut.update();
+        syncDevicePresenceUI();
 
         const d = new Date(data.timestamp);
         const timeStr = isNaN(d) ? new Date().toLocaleTimeString() : d.toLocaleTimeString();
 
-        // Terminal Feed
         const term = document.getElementById('terminalBox');
         if (term) {
             const p = document.createElement('p');
@@ -336,13 +433,97 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // 6. Listen to Firebase History Event (Pre-fills all charts immediately on page load!)
+    // 7. Dynamic Config Listener & Form Submit
+    const settingsForm = document.getElementById('settingsForm');
+    const settingsStatus = document.getElementById('settingsSaveStatus');
+
+    function populateSettingsForm(cfg) {
+        const tgEl = document.getElementById('telegramEnabledSelect');
+        const minPhEl = document.getElementById('minPhInput');
+        const maxPhEl = document.getElementById('maxPhInput');
+        const maxTdsEl = document.getElementById('maxTdsInput');
+        const maxTurbEl = document.getElementById('maxTurbInput');
+
+        if (tgEl) tgEl.value = String(Boolean(cfg.telegramEnabled));
+        if (minPhEl) minPhEl.value = cfg.minPh;
+        if (maxPhEl) maxPhEl.value = cfg.maxPh;
+        if (maxTdsEl) maxTdsEl.value = cfg.maxTds;
+        if (maxTurbEl) maxTurbEl.value = cfg.maxTurb;
+    }
+    populateSettingsForm(activeConfig);
+
+    window.addEventListener('hydrosense:config', (e) => {
+        if (!e.detail) return;
+        activeConfig = { ...activeConfig, ...e.detail };
+        populateSettingsForm(activeConfig);
+        renderAlertsTable();
+        if (currentData.timestamp) {
+            applyReadingToUI(currentData, false);
+        }
+    });
+
+    if (settingsForm) {
+        settingsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const minPh = Number(document.getElementById('minPhInput').value);
+            const maxPh = Number(document.getElementById('maxPhInput').value);
+            const maxTds = Number(document.getElementById('maxTdsInput').value);
+            const maxTurb = Number(document.getElementById('maxTurbInput').value);
+            const telegramEnabled = document.getElementById('telegramEnabledSelect').value === 'true';
+
+            if (Number.isNaN(minPh) || Number.isNaN(maxPh) || minPh < 0 || maxPh > 14 || minPh >= maxPh) {
+                if (settingsStatus) {
+                    settingsStatus.style.color = 'var(--accent-danger)';
+                    settingsStatus.innerText = 'Invalid pH range: ensure 0 <= Min pH < Max pH <= 14.';
+                }
+                return;
+            }
+            if (Number.isNaN(maxTds) || maxTds <= 0 || Number.isNaN(maxTurb) || maxTurb <= 0) {
+                if (settingsStatus) {
+                    settingsStatus.style.color = 'var(--accent-danger)';
+                    settingsStatus.innerText = 'TDS and Turbidity limits must be positive numbers.';
+                }
+                return;
+            }
+
+            if (typeof window.saveHydroSenseConfig !== 'function') {
+                if (settingsStatus) {
+                    settingsStatus.style.color = 'var(--accent-warning)';
+                    settingsStatus.innerText = 'Firebase config writer not ready yet.';
+                }
+                return;
+            }
+
+            try {
+                if (settingsStatus) {
+                    settingsStatus.style.color = 'var(--text-muted)';
+                    settingsStatus.innerText = 'Saving to Firebase...';
+                }
+                await window.saveHydroSenseConfig({ minPh, maxPh, maxTds, maxTurb, telegramEnabled });
+                activeConfig = { minPh, maxPh, maxTds, maxTurb, telegramEnabled };
+                renderAlertsTable();
+                if (currentData.timestamp) {
+                    applyReadingToUI(currentData, false);
+                }
+                if (settingsStatus) {
+                    settingsStatus.style.color = 'var(--accent-success)';
+                    settingsStatus.innerText = 'Saved & synced to Firebase!';
+                }
+            } catch (err) {
+                if (settingsStatus) {
+                    settingsStatus.style.color = 'var(--accent-danger)';
+                    settingsStatus.innerText = `Save failed: ${err.message}`;
+                }
+            }
+        });
+    }
+
+    // 8. Listen to Firebase History Event
     window.addEventListener('hydrosense:history', (e) => {
         const list = e.detail || [];
         if (!list.length) return;
         historyCache = list;
 
-        // Pre-populate mini & main charts with last 20 Firebase readings
         const recent = list.slice(-20);
         const padCount = 20 - recent.length;
         const padNulls = Array(padCount).fill(null);
@@ -366,7 +547,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderAlertsTable();
     });
 
-    // 7. Listen to Firebase Live Latest Event
+    // 9. Listen to Firebase Live Latest Event
     window.addEventListener('hydrosense:latest', (e) => {
         const data = e.detail;
         if (!data || data.timestamp === lastProcessedTimestamp) return;
@@ -375,7 +556,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applyReadingToUI(data, !isFirstLoad);
     });
 
-    // 8. Report Generation (Professional PDF Export)
+    // 10. Report Generation (PDF Export)
     window.generateReport = function () {
         const period = document.getElementById('reportPeriod').value;
         const signatoryName = document.getElementById('reportSignatoryName').value;
@@ -393,46 +574,51 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('pdfNameOut').innerText = signatoryName;
         document.getElementById('pdfDesigOut').innerText = signatoryDesig;
 
-        const isSafePh = currentData.ph >= 6.5 && currentData.ph <= 8.5;
-        const isSafeTds = currentData.tds < 500;
-        const isSafeTurb = currentData.turb < 5.0;
+        const phVal = currentData.ph ?? '--';
+        const tdsVal = currentData.tds ?? '--';
+        const turbVal = currentData.turb ?? '--';
+        const tempVal = currentData.temp ?? '--';
+
+        const isSafePh = typeof currentData.ph === 'number' && currentData.ph >= activeConfig.minPh && currentData.ph <= activeConfig.maxPh;
+        const isSafeTds = typeof currentData.tds === 'number' && currentData.tds <= activeConfig.maxTds;
+        const isSafeTurb = typeof currentData.turb === 'number' && currentData.turb <= activeConfig.maxTurb;
 
         document.getElementById('pdfTableBody').innerHTML = `
             <tr>
                 <td style="padding:12px; border:1px solid #ccc;">Temperature</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${currentData.temp} °C</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${tempVal} °C</td>
                 <td style="padding:12px; border:1px solid #ccc; text-align:center;">15.0 - 35.0 °C</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:green; font-weight:bold;">Conforme</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:green; font-weight:bold;">Recorded</td>
             </tr>
             <tr>
-                <td style="padding:12px; border:1px solid #ccc;">pH Level (Truth Value)</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${currentData.ph} pH</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center;">6.5 - 8.5</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafePh ? 'green' : 'red'}; font-weight:bold;">${isSafePh ? 'Conforme' : 'Critical'}</td>
+                <td style="padding:12px; border:1px solid #ccc;">pH Level</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${phVal} pH</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center;">${activeConfig.minPh} - ${activeConfig.maxPh}</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafePh ? 'green' : 'red'}; font-weight:bold;">${isSafePh ? 'Safe' : 'Alert'}</td>
             </tr>
             <tr>
                 <td style="padding:12px; border:1px solid #ccc;">TDS (Total Dissolved Solids)</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${currentData.tds} ppm</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center;">< 500 ppm</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafeTds ? 'green' : 'orange'}; font-weight:bold;">${isSafeTds ? 'Conforme' : 'Warning'}</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${tdsVal} ppm</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center;">&le; ${activeConfig.maxTds} ppm</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafeTds ? 'green' : 'orange'}; font-weight:bold;">${isSafeTds ? 'Safe' : 'Alert'}</td>
             </tr>
             <tr>
                 <td style="padding:12px; border:1px solid #ccc;">Turbidity</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${currentData.turb} NTU</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center;">< 5.0 NTU</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafeTurb ? 'green' : 'orange'}; font-weight:bold;">${isSafeTurb ? 'Conforme' : 'Warning'}</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${turbVal} NTU</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center;">&le; ${activeConfig.maxTurb} NTU</td>
+                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafeTurb ? 'green' : 'orange'}; font-weight:bold;">${isSafeTurb ? 'Safe' : 'Alert'}</td>
             </tr>
         `;
 
         const vEl = document.getElementById('pdfVerdict');
-        vEl.innerText = currentData.status;
+        vEl.innerText = currentData.status || 'WAITING';
         vEl.style.color = currentData.status === 'POTABLE' ? 'green' : 'red';
-        document.getElementById('pdfConf').innerText = `${currentData.conf}%`;
+        document.getElementById('pdfConf').innerText = currentData.conf !== null ? `${currentData.conf}%` : '--';
 
         const element = document.getElementById('reportTemplate');
         const opt = {
             margin: 0,
-            filename: `HydroSense_Official_Report_${now.getTime()}.pdf`,
+            filename: `HydroSense_Report_${now.getTime()}.pdf`,
             image: { type: 'jpeg', quality: 1.0 },
             html2canvas: { scale: 2, useCORS: true, logging: false },
             jsPDF: { unit: 'px', format: [794, 1123], orientation: 'portrait' }

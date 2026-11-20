@@ -6,6 +6,13 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent.parent
 FEATURES = ["pH", "TDS_ppm", "Turbidity_NTU", "Temperature_C"]
 
+DEFAULT_THRESHOLDS = {
+    "min_ph": 6.5,
+    "max_ph": 8.5,
+    "max_tds": 500.0,
+    "max_turbidity": 5.0,
+}
+
 JOBLIB_CANDIDATES = [
     BASE_DIR / "model" / "lightgbm_water_model.joblib",
     BASE_DIR / "models" / "lightgbm_water_model.joblib",
@@ -49,19 +56,37 @@ def _ensure_model_loaded():
     _loaded = True
 
 
-def check_bis_rules(ph: float, tds: float, turbidity: float):
-    if ph < 6.5 or ph > 8.5:
-        return True, "BIS Violation: pH out of safe range (6.5 - 8.5)"
-    if tds > 500:
-        return True, "BIS Violation: TDS > 500 ppm"
-    if turbidity > 5.0:
-        return True, "BIS Violation: Turbidity > 5.0 NTU"
-    return False, "Passes Basic Rules"
+def check_bis_rules(
+    ph: float,
+    tds: float,
+    turbidity: float,
+    thresholds: dict | None = None,
+):
+    cfg = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    min_ph = float(cfg["min_ph"])
+    max_ph = float(cfg["max_ph"])
+    max_tds = float(cfg["max_tds"])
+    max_turb = float(cfg["max_turbidity"])
+
+    if ph < min_ph or ph > max_ph:
+        return True, f"Threshold Violation: pH out of safe range ({min_ph} - {max_ph})"
+    if tds > max_tds:
+        return True, f"Threshold Violation: TDS > {max_tds} ppm"
+    if turbidity > max_turb:
+        return True, f"Threshold Violation: Turbidity > {max_turb} NTU"
+    return False, "Passes Configured Thresholds"
 
 
-def evaluate_water_quality(ph: float, tds: float, turbidity: float, temperature: float) -> dict:
-    # Stage 1: BIS Threshold Fast-Path
-    is_violation, rule_message = check_bis_rules(ph, tds, turbidity)
+def evaluate_water_quality(
+    ph: float,
+    tds: float,
+    turbidity: float,
+    temperature: float,
+    ml_enabled: bool = True,
+    thresholds: dict | None = None,
+) -> dict:
+    # Stage 1: Configured Threshold Check
+    is_violation, rule_message = check_bis_rules(ph, tds, turbidity, thresholds=thresholds)
     if is_violation:
         return {
             "status": "UNSAFE",
@@ -70,7 +95,16 @@ def evaluate_water_quality(ph: float, tds: float, turbidity: float, temperature:
             "confidence": 94,
         }
 
-    # Stage 2: LightGBM Model Inference
+    # If ML flag is explicitly disabled, rely purely on threshold evaluation
+    if not ml_enabled:
+        return {
+            "status": "SAFE",
+            "message": "ML disabled (ML_ENABLED=false); water parameters are within configured safe limits.",
+            "prediction_source": "THRESHOLDS_ONLY",
+            "confidence": 95,
+        }
+
+    # Stage 2: ML Model Inference
     _ensure_model_loaded()
     input_df = pd.DataFrame(
         [[ph, tds, turbidity, temperature]],
@@ -84,9 +118,9 @@ def evaluate_water_quality(ph: float, tds: float, turbidity: float, temperature:
         return {
             "status": "SAFE" if is_safe else "UNSAFE",
             "message": (
-                "Water passed both BIS thresholds and LightGBM screening."
+                "Water passed configured thresholds and LightGBM screening."
                 if is_safe
-                else "Water passes BIS rules, but LightGBM detected a hazard pattern."
+                else "Water passes thresholds, but LightGBM detected a hazard pattern."
             ),
             "prediction_source": "LIGHTGBM_BOOSTER",
             "confidence": max(50, min(99, conf)),
@@ -102,15 +136,14 @@ def evaluate_water_quality(ph: float, tds: float, turbidity: float, temperature:
         return {
             "status": "SAFE" if is_safe else "UNSAFE",
             "message": (
-                "Water passed both BIS thresholds and AI screening."
+                "Water passed configured thresholds and AI screening."
                 if is_safe
-                else "Water passes BIS rules, but AI detected a hazard pattern."
+                else "Water passes thresholds, but AI detected a hazard pattern."
             ),
             "prediction_source": "LIGHTGBM_JOBLIB",
             "confidence": max(50, min(99, conf)),
         }
 
-    # Fallback if no model file is found
     return {
         "status": "SAFE",
         "message": "Water quality parameters are within acceptable limits",

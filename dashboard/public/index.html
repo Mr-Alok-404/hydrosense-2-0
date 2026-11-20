@@ -7,26 +7,28 @@
     <link rel="stylesheet" href="./css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- html2pdf for professional PDF generation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body>
     <div class="app-container">
-        
+
         <!-- Mobile Header -->
         <header class="mobile-header">
             <div class="mobile-brand">
-                <img src="./assets/college_logo.png" alt="Logo" class="logo">
+                <img src="./assets/college_logo.png" alt="HydroSense Logo" class="brand-logo">
                 <h2>HydroSense</h2>
             </div>
-            <button id="mobileMenuBtn" class="icon-btn"><i class="fas fa-bars"></i></button>
+            <button id="mobileMenuBtn" class="icon-btn" aria-label="Toggle Menu"><i class="fas fa-bars"></i></button>
         </header>
 
         <!-- Sidebar Navigation -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header desktop-only">
-                <img src="./assets/college_logo.png" alt="Logo" class="logo">
-                <h2>HydroSense</h2>
+                <img src="./assets/college_logo.png" alt="HydroSense Logo" class="brand-logo">
+                <div class="brand-title-text">
+                    <h2>HydroSense 2.0</h2>
+                    <span>Edge-AI Water Monitor</span>
+                </div>
             </div>
             <nav class="sidebar-nav">
                 <a href="#" class="nav-item active" data-target="dashboard-view"><i class="fas fa-home"></i> Dashboard</a>
@@ -43,19 +45,19 @@
         <main class="main-content" id="mainContent">
             <header class="topbar">
                 <div class="topbar-left">
-                    <h1 id="pageTitle">Dashboard <span class="badge" id="liveBadge">Live</span></h1>
+                    <h1 id="pageTitle">Dashboard <span class="badge offline-badge" id="liveBadge">Offline</span></h1>
                 </div>
                 <div class="topbar-right">
                     <span class="date-picker desktop-only" id="currentDateTime"><i class="fas fa-calendar-alt"></i> Loading...</span>
-                    <button class="icon-btn" onclick="alert('Cloud Sync verified. Connected to Firebase Realtime Database.')" title="Cloud Sync"><i class="fas fa-cloud"></i></button>
+                    <button class="icon-btn" onclick="alert('Connected to Firebase Realtime Database (hydrosense-2-0).')" title="Cloud Sync"><i class="fas fa-cloud"></i></button>
                     <button class="icon-btn" id="themeToggle" title="Toggle Theme"><i class="fas fa-moon"></i></button>
-                    <button class="icon-btn user-profile" title="Profile"><i class="fas fa-user-circle"></i></button>
+                    <button class="icon-btn user-profile" title="Operator Profile"><i class="fas fa-user-circle"></i></button>
                 </div>
             </header>
 
             <!-- Views Container -->
             <div class="view-container">
-                
+
                 <!-- VIEW 1: MAIN DASHBOARD -->
                 <div id="dashboard-view" class="view-section active-view">
                     <div class="dashboard-grid">
@@ -63,25 +65,25 @@
                         <div class="kpi-card" id="card-temp">
                             <div class="kpi-header"><span class="kpi-title">Temperature</span><i class="fas fa-thermometer-half icon-cyan"></i></div>
                             <div class="kpi-value"><span id="val-temp">--</span> <span class="unit">°C</span></div>
-                            <div class="kpi-status status-normal">Safe (Truth Value)</div>
+                            <div class="kpi-status status-normal">Waiting for Telemetry</div>
                             <div class="mini-chart-container"><canvas id="mini-temp"></canvas></div>
                         </div>
                         <div class="kpi-card" id="card-ph">
                             <div class="kpi-header"><span class="kpi-title">pH Level</span><i class="fas fa-tint icon-blue"></i></div>
                             <div class="kpi-value"><span id="val-ph">--</span> <span class="unit">pH</span></div>
-                            <div class="kpi-status status-normal">Safe (Truth Value)</div>
+                            <div class="kpi-status status-normal">Waiting for Telemetry</div>
                             <div class="mini-chart-container"><canvas id="mini-ph"></canvas></div>
                         </div>
                         <div class="kpi-card" id="card-tds">
                             <div class="kpi-header"><span class="kpi-title">TDS</span><i class="fas fa-water icon-green"></i></div>
                             <div class="kpi-value"><span id="val-tds">--</span> <span class="unit">ppm</span></div>
-                            <div class="kpi-status status-normal">Safe (Truth Value)</div>
+                            <div class="kpi-status status-normal">Waiting for Telemetry</div>
                             <div class="mini-chart-container"><canvas id="mini-tds"></canvas></div>
                         </div>
                         <div class="kpi-card" id="card-turb">
                             <div class="kpi-header"><span class="kpi-title">Turbidity</span><i class="fas fa-water icon-yellow"></i></div>
                             <div class="kpi-value"><span id="val-turb">--</span> <span class="unit">NTU</span></div>
-                            <div class="kpi-status status-normal">Safe (Truth Value)</div>
+                            <div class="kpi-status status-normal">Waiting for Telemetry</div>
                             <div class="mini-chart-container"><canvas id="mini-turb"></canvas></div>
                         </div>
 
@@ -100,18 +102,18 @@
 
                         <!-- Water Quality Index -->
                         <div class="panel wqi-panel">
-                            <div class="panel-header"><h3>ML Potability Score</h3></div>
+                            <div class="panel-header"><h3>Potability Score</h3></div>
                             <div class="wqi-container">
                                 <div class="wqi-gauge">
                                     <canvas id="wqiChart"></canvas>
                                     <div class="wqi-center">
-                                        <span class="wqi-score" id="wqiScoreVal">96%</span>
-                                        <span class="wqi-label" id="wqiLabelTxt" style="color:var(--accent-success);font-weight:bold;">POTABLE</span>
+                                        <span class="wqi-score" id="wqiScoreVal">--%</span>
+                                        <span class="wqi-label" id="wqiLabelTxt" style="color:var(--text-muted);font-weight:bold;">WAITING</span>
                                     </div>
                                 </div>
                                 <div class="wqi-legend">
-                                    <div class="wqi-leg-item"><span class="dot dot-exc"></span> Safe (>90%)</div>
-                                    <div class="wqi-leg-item"><span class="dot dot-poor"></span> Unsafe (<89%)</div>
+                                    <div class="wqi-leg-item"><span class="dot dot-exc"></span> Safe / Potable</div>
+                                    <div class="wqi-leg-item"><span class="dot dot-poor"></span> Unsafe / Non-Potable</div>
                                 </div>
                             </div>
                         </div>
@@ -122,13 +124,12 @@
                 <div id="realtime-view" class="view-section hidden-view">
                     <div class="panel list-panel">
                         <div class="panel-header">
-                            <h3>Raw Telemetry Feed (ESP32-WROOM & Sensor Truth Values)</h3>
-                            <span class="badge">Live Firebase Stream</span>
+                            <h3>Raw Telemetry Feed (ESP32-WROOM & Sensor Stream)</h3>
+                            <span class="badge" id="terminalStreamBadge">Firebase Stream</span>
                         </div>
                         <div class="terminal-box" id="terminalBox">
                             <p class="term-line system">> System initialized. Listening to Firebase Realtime Database...</p>
-                            <p class="term-line success">> ESP32-WROOM Telemetry Stream Connected</p>
-                            <p class="term-line system">> Sensor calibration & threshold checks active.</p>
+                            <p class="term-line system">> Device heartbeat monitor active (30s stale window).</p>
                         </div>
                     </div>
                 </div>
@@ -137,14 +138,16 @@
                 <div id="trends-view" class="view-section hidden-view">
                     <div class="panel main-chart-panel">
                         <div class="panel-header">
-                            <h3>Historical Analytics & Sensor Truth Values</h3>
+                            <h3>Historical Analytics (Firebase Stored Readings)</h3>
                             <div class="filter-group">
                                 <button class="btn-filter" data-period="1D">1D</button>
                                 <button class="btn-filter active" data-period="1W">1W</button>
                                 <button class="btn-filter" data-period="1M">1M</button>
                                 <select class="custom-select ml-2" id="trendMetricSelect">
                                     <option value="ph">pH Levels</option>
-                                    <option value="tds">TDS</option>
+                                    <option value="tds">TDS (ppm)</option>
+                                    <option value="turbidity">Turbidity (NTU)</option>
+                                    <option value="temp">Temperature (°C)</option>
                                 </select>
                             </div>
                         </div>
@@ -158,11 +161,11 @@
                 <div id="reports-view" class="view-section hidden-view">
                     <div class="panel list-panel">
                         <div class="panel-header">
-                            <h3>Generate Professional Water Quality Report</h3>
+                            <h3>Generate Water Quality Report</h3>
                         </div>
                         <div class="report-generator-container mt-3">
-                            <p class="text-muted">Export an IEEE-standard compliant analysis report including the college logo, official digital signatures, and current parameter classifications based on truth value sensors.</p>
-                            <div class="form-group mt-3" style="max-width: 300px;">
+                            <p class="text-muted">Export a structured water quality report including institute branding, signatory details, active BIS limits, and latest parameter readings.</p>
+                            <div class="form-group mt-3" style="max-width: 320px;">
                                 <label>Report Period</label>
                                 <select class="form-control" id="reportPeriod">
                                     <option value="1D">Last 24 Hours</option>
@@ -170,65 +173,58 @@
                                     <option value="1M">Last 30 Days</option>
                                 </select>
                             </div>
-                            <div class="form-group mt-3" style="max-width: 300px;">
+                            <div class="form-group mt-3" style="max-width: 320px;">
                                 <label>Authorized Signatory Name</label>
                                 <input type="text" class="form-control" id="reportSignatoryName" value="Dr. A. K. Sharma">
                             </div>
-                            <div class="form-group mt-3" style="max-width: 300px;">
+                            <div class="form-group mt-3" style="max-width: 320px;">
                                 <label>Designation</label>
                                 <input type="text" class="form-control" id="reportSignatoryDesig" value="Head of Department, ECE">
                             </div>
-                            <button class="btn-primary mt-4" onclick="generateReport()"><i class="fas fa-file-pdf"></i> Download Official PDF Report</button>
+                            <button class="btn-primary mt-4" onclick="generateReport()"><i class="fas fa-file-pdf"></i> Download PDF Report</button>
                         </div>
 
                         <!-- Hidden Template for PDF Generation (A4 Proportions) -->
                         <div id="reportTemplateWrapper" style="position: absolute; left: -9999px; top: 0;">
                             <div id="reportTemplate" style="width: 794px; min-height: 1123px; background: white; color: black; padding: 60px; box-sizing: border-box; font-family: 'Times New Roman', Times, serif;">
-                                
-                                <!-- Header with Logo -->
                                 <div style="display:flex; justify-content: space-between; align-items:flex-start; border-bottom: 2px solid #003366; padding-bottom:20px; margin-bottom:30px;">
-                                    <img src="./assets/college_logo.png" alt="College Logo" style="height: 80px; width:80px; object-fit:contain;">
+                                    <img src="./assets/college_logo.png" alt="College Logo" style="height: 76px; width:auto; max-width:120px; object-fit:contain;">
                                     <div style="text-align:right;">
                                         <h1 style="margin:0; font-size:24px; color:#003366; text-transform:uppercase;">HydroSense 2.0 Edge-AI</h1>
                                         <h2 style="margin:5px 0 0 0; font-size:18px; color:#444;">Water Quality Analysis Report</h2>
                                         <p style="margin:5px 0 0 0; color:#666; font-size:14px;" id="pdfDate"></p>
                                     </div>
                                 </div>
-                                
+
                                 <h3 style="margin-bottom: 10px; color:#003366; font-size:18px; border-bottom:1px solid #ccc; padding-bottom:5px;">1. Executive Summary</h3>
                                 <p style="line-height:1.6; font-size:14px; text-align:justify;">
-                                    This official document presents the automated water quality assessment generated by the HydroSense 2.0 system. Data was acquired using the ESP32-WROOM hardware node equipped with truth value sensors for pH, TDS, Turbidity, and Temperature. The acquired telemetry has been processed through the system's classification pipeline to determine potability.
+                                    This report summarizes water quality telemetry acquired by the HydroSense 2.0 ESP32-WROOM node across pH, TDS, Turbidity, and Temperature sensors, evaluated against configured BIS thresholds and system classification logic.
                                 </p>
-                                
-                                <h3 style="margin-top: 30px; margin-bottom: 10px; color:#003366; font-size:18px; border-bottom:1px solid #ccc; padding-bottom:5px;">2. Sensor Telemetry & Truth Values (<span id="pdfPeriod"></span>)</h3>
+
+                                <h3 style="margin-top: 30px; margin-bottom: 10px; color:#003366; font-size:18px; border-bottom:1px solid #ccc; padding-bottom:5px;">2. Sensor Telemetry &amp; Threshold Comparison (<span id="pdfPeriod"></span>)</h3>
                                 <table style="width:100%; border-collapse: collapse; margin-top:15px; font-size:14px;">
                                     <thead>
                                         <tr style="background:#003366; color:white;">
                                             <th style="padding:12px; border:1px solid #003366; text-align:left;">Parameter</th>
-                                            <th style="padding:12px; border:1px solid #003366; text-align:center;">Avg Truth Value</th>
-                                            <th style="padding:12px; border:1px solid #003366; text-align:center;">WHO Safe Range</th>
+                                            <th style="padding:12px; border:1px solid #003366; text-align:center;">Latest Value</th>
+                                            <th style="padding:12px; border:1px solid #003366; text-align:center;">Configured Safe Range</th>
                                             <th style="padding:12px; border:1px solid #003366; text-align:center;">Status</th>
                                         </tr>
                                     </thead>
-                                    <tbody id="pdfTableBody">
-                                        <!-- Populated via JS -->
-                                    </tbody>
+                                    <tbody id="pdfTableBody"></tbody>
                                 </table>
-                                
-                                <h3 style="margin-top: 30px; margin-bottom: 10px; color:#003366; font-size:18px; border-bottom:1px solid #ccc; padding-bottom:5px;">3. Potability Classification Result</h3>
+
+                                <h3 style="margin-top: 30px; margin-bottom: 10px; color:#003366; font-size:18px; border-bottom:1px solid #ccc; padding-bottom:5px;">3. Potability Evaluation</h3>
                                 <p style="line-height:1.6; font-size:14px;">
-                                    Based on the aggregation of the above parameters, the water quality evaluation classifies the sample as: <strong id="pdfVerdict" style="font-size:16px;">--</strong> with a confidence score of <strong id="pdfConf">--</strong>.
+                                    Sample Classification: <strong id="pdfVerdict" style="font-size:16px;">--</strong> | Confidence / Score: <strong id="pdfConf">--</strong>.
                                 </p>
 
-                                <!-- Digital Signature Section -->
                                 <div style="margin-top: 100px; display:flex; justify-content: space-between; align-items:flex-end;">
                                     <div>
-                                        <p style="margin:0; font-size:12px; color:#777;">System Node ID: HS-ESP32-NODE-A</p>
-                                        <p style="margin:0; font-size:12px; color:#777;">Report Authenticity verified by HydroSense Firebase Sync</p>
-                                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=HydroSense+Verified+Report" alt="QR Code" style="margin-top:10px;">
+                                        <p style="margin:0; font-size:12px; color:#777;">Device ID: HYDRO_ESP32_01</p>
+                                        <p style="margin:0; font-size:12px; color:#777;">Source: HydroSense Firebase Realtime Database</p>
                                     </div>
                                     <div style="text-align:center; width:250px;">
-                                        <!-- Stylish Digital Signature -->
                                         <p style="font-family: 'Brush Script MT', cursive; font-size: 32px; color: #000; margin: 0; border-bottom: 1px solid #000; padding-bottom: 5px; text-align:center;" id="pdfSign">Signature</p>
                                         <p style="margin:8px 0 0 0; font-size:14px; font-weight:bold; text-transform:uppercase;" id="pdfNameOut"></p>
                                         <p style="margin:2px 0 0 0; font-size:12px; color:#555;" id="pdfDesigOut"></p>
@@ -243,15 +239,24 @@
                 <div id="alerts-view" class="view-section hidden-view">
                     <div class="panel list-panel">
                         <div class="panel-header">
-                            <h3>System & Telegram Alerts Log (Truth Value Violations)</h3>
-                            <span style="color:var(--text-muted); font-size:0.9rem;">Telegram Bot Status: <span style="color:var(--accent-success)">Active</span></span>
+                            <h3>System &amp; Telegram Alerts Log (Threshold Violations)</h3>
+                            <span style="color:var(--text-muted); font-size:0.9rem;">Telegram Alerts: <strong id="alertsBotStatusLabel">Checking...</strong></span>
                         </div>
-                        <table class="data-table mt-3">
-                            <thead><tr><th>Timestamp</th><th>Sensor Trigger</th><th>Actual Truth Value vs Threshold</th><th>Action Taken</th></tr></thead>
-                            <tbody id="alertsTableBody">
-                                <tr><td colspan="4">Loading alerts...</td></tr>
-                            </tbody>
-                        </table>
+                        <div class="table-responsive">
+                            <table class="data-table mt-3">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Sensor Trigger</th>
+                                        <th>Actual Value vs Configured Limit</th>
+                                        <th>Action Taken</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="alertsTableBody">
+                                    <tr><td colspan="4">Loading alerts...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -263,59 +268,80 @@
                                 <i class="fas fa-microchip device-icon"></i>
                                 <div>
                                     <h3>ESP32-WROOM Node A</h3>
-                                    <p class="text-muted">Primary Water Quality Sensor Array</p>
+                                    <p class="text-muted">Water Quality Sensor Array</p>
                                 </div>
-                                <span class="status-badge bg-normal ml-auto">Online</span>
+                                <span class="status-badge bg-danger ml-auto" id="deviceStatusBadge">Offline</span>
                             </div>
                             <div class="device-stats">
                                 <div class="d-stat"><span>Board Architecture</span><strong>ESP32-WROOM-32 (Dual Core)</strong></div>
-                                <div class="d-stat"><span>Firmware Task</span><strong>FreeRTOS / C++</strong></div>
                                 <div class="d-stat"><span>Device ID</span><strong>HYDRO_ESP32_01</strong></div>
                                 <div class="d-stat"><span>Cloud Sync</span><strong>Firebase Realtime DB</strong></div>
-                                <div class="d-stat"><span>Truth Value Calibration</span><strong>ADC 12-bit Mapped</strong></div>
-                                <div class="d-stat"><span>Data Frequency</span><strong>Polling every 10 sec</strong></div>
-                            </div>
-                            <div class="device-actions">
-                                <button class="btn-outline" onclick="alert('OTA Update status checked via cloud.')"><i class="fas fa-sync"></i> OTA Update</button>
-                                <button class="btn-outline" onclick="alert('Sensor calibration verified.')"><i class="fas fa-tools"></i> Calibrate Sensors</button>
+                                <div class="d-stat"><span>Last Telemetry Seen</span><strong id="deviceLastSeen">Never</strong></div>
+                                <div class="d-stat"><span>Connection State</span><strong id="deviceConnectionNote">No recent data (&gt;30s)</strong></div>
+                                <div class="d-stat"><span>Data Source</span><strong id="deviceDataSource">--</strong></div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- VIEW 7: SETTINGS -->
+                <!-- VIEW 7: SETTINGS (Dynamic BIS Rules + Telegram Bot Toggle) -->
                 <div id="settings-view" class="view-section hidden-view">
-                    <div class="panel list-panel" style="max-width: 600px;">
+                    <div class="panel list-panel" style="max-width: 640px;">
                         <div class="panel-header">
-                            <h3>Admin Configuration & Calibration</h3>
+                            <h3>Dynamic BIS Thresholds &amp; Alert Configuration</h3>
                         </div>
-                        <form class="settings-form mt-3" onsubmit="event.preventDefault(); alert('Threshold preferences saved in browser!');">
+                        <form class="settings-form mt-3" id="settingsForm">
                             <div class="form-group">
-                                <label>Telegram Bot Status</label>
-                                <input type="text" class="form-control" value="Configured via Backend .env" readonly>
+                                <label for="telegramEnabledSelect">Telegram Bot Alerts</label>
+                                <select id="telegramEnabledSelect" class="form-control">
+                                    <option value="true">Enabled (Send alerts on unsafe readings)</option>
+                                    <option value="false">Disabled (Pause Telegram alerts)</option>
+                                </select>
                             </div>
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label>Min Safe pH</label>
-                                    <input type="number" step="0.1" class="form-control" value="6.5">
+                                    <label for="minPhInput">Min Safe pH (BIS)</label>
+                                    <input type="number" step="0.1" id="minPhInput" class="form-control" value="6.5" required>
                                 </div>
                                 <div class="form-group">
-                                    <label>Max Safe pH</label>
-                                    <input type="number" step="0.1" class="form-control" value="8.5">
+                                    <label for="maxPhInput">Max Safe pH (BIS)</label>
+                                    <input type="number" step="0.1" id="maxPhInput" class="form-control" value="8.5" required>
                                 </div>
                             </div>
-                            <div class="form-group">
-                                <label>Max Safe TDS (ppm)</label>
-                                <input type="number" class="form-control" value="500">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="maxTdsInput">Max Safe TDS (ppm)</label>
+                                    <input type="number" step="1" id="maxTdsInput" class="form-control" value="500" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="maxTurbInput">Max Safe Turbidity (NTU)</label>
+                                    <input type="number" step="0.1" id="maxTurbInput" class="form-control" value="5.0" required>
+                                </div>
                             </div>
-                            <button class="btn-primary mt-3" type="submit">Save Configurations</button>
+                            <div class="form-actions-row">
+                                <button class="btn-primary" type="submit" id="saveSettingsBtn">
+                                    <i class="fas fa-save"></i> Save Configurations
+                                </button>
+                                <span id="settingsSaveStatus" class="form-status"></span>
+                            </div>
                         </form>
                     </div>
                 </div>
 
             </div>
+
+            <!-- Footer -->
+            <footer class="site-footer">
+                <div>
+                    <strong>HydroSense 2.0</strong> &mdash; Water Quality Monitoring &amp; Classification Dashboard
+                </div>
+                <div>
+                    &copy; <span id="copyrightYear">2026</span> HydroSense Project. All rights reserved.
+                </div>
+            </footer>
         </main>
     </div>
+
     <script src="./js/dashboard.js"></script>
     <script type="module" src="./js/firebase-live.js"></script>
 </body>

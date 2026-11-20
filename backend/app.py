@@ -1,12 +1,14 @@
 import os
+import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
+import requests
 
 from firebase_service import save_reading
 from services.alert_service import send_telegram_alert
-from services.ml_service import evaluate_water_quality
+from services.ml_service import DEFAULT_THRESHOLDS, evaluate_water_quality
 
 load_dotenv()
 
@@ -16,6 +18,54 @@ app = Flask(
     static_folder="../dashboard/static",
 )
 CORS(app)
+
+
+def is_ml_enabled() -> bool:
+    raw = os.getenv("ML_ENABLED", "true").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+_rules_cache = {
+    "fetched_at": 0.0,
+    "thresholds": dict(DEFAULT_THRESHOLDS),
+    "telegram_enabled": True,
+}
+
+
+def get_remote_config_and_alerts() -> tuple[dict, bool]:
+    """Fetches dynamic thresholds & telegram toggle from Firebase RTDB with 10s cache + safe fallback."""
+    now = time.time()
+    if now - _rules_cache["fetched_at"] < 10.0:
+        return dict(_rules_cache["thresholds"]), bool(_rules_cache["telegram_enabled"])
+
+    db_url = os.getenv(
+        "FIREBASE_DATABASE_URL",
+        "https://hydrosense-2-0-default-rtdb.asia-southeast1.firebasedatabase.app",
+    ).rstrip("/")
+
+    thresholds = dict(DEFAULT_THRESHOLDS)
+    telegram_enabled = True
+
+    try:
+        resp = requests.get(f"{db_url}/config/bis_rules.json", timeout=4)
+        if resp.ok and isinstance(resp.json(), dict):
+            data = resp.json()
+            thresholds = {
+                "min_ph": float(data.get("min_ph", DEFAULT_THRESHOLDS["min_ph"])),
+                "max_ph": float(data.get("max_ph", DEFAULT_THRESHOLDS["max_ph"])),
+                "max_tds": float(data.get("max_tds", DEFAULT_THRESHOLDS["max_tds"])),
+                "max_turbidity": float(data.get("max_turbidity", DEFAULT_THRESHOLDS["max_turbidity"])),
+            }
+            if "telegram_enabled" in data:
+                telegram_enabled = bool(data["telegram_enabled"])
+    except Exception as exc:
+        print(f"Warning: could not fetch /config/bis_rules from Firebase: {exc}")
+
+    _rules_cache["fetched_at"] = now
+    _rules_cache["thresholds"] = dict(thresholds)
+    _rules_cache["telegram_enabled"] = telegram_enabled
+    return thresholds, telegram_enabled
+
 
 latest_reading = {
     "device_id": "HYDRO_ESP32_01",
@@ -27,6 +77,7 @@ latest_reading = {
     "status": "WAITING",
     "confidence": None,
     "prediction_source": None,
+    "ml_enabled": is_ml_enabled(),
     "timestamp": None,
 }
 history_readings = []
@@ -46,7 +97,16 @@ def normalize_payload(data: dict) -> dict:
     turb_val = float(turbidity)
     temp_val = float(temp)
 
-    eval_result = evaluate_water_quality(ph_val, tds_val, turb_val, temp_val)
+    ml_flag = is_ml_enabled()
+    thresholds, _ = get_remote_config_and_alerts()
+    eval_result = evaluate_water_quality(
+        ph_val,
+        tds_val,
+        turb_val,
+        temp_val,
+        ml_enabled=ml_flag,
+        thresholds=thresholds,
+    )
 
     return {
         "device_id": str(data.get("device_id", "HYDRO_ESP32_01")),
@@ -60,6 +120,7 @@ def normalize_payload(data: dict) -> dict:
         "confidence": eval_result["confidence"],
         "message": eval_result["message"],
         "prediction_source": eval_result["prediction_source"],
+        "ml_enabled": ml_flag,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -75,6 +136,7 @@ def health():
         "status": "online",
         "has_data": latest_reading["timestamp"] is not None,
         "firebase_enabled": True,
+        "ml_enabled": is_ml_enabled(),
         "prediction_source": latest_reading.get("prediction_source"),
     })
 
@@ -99,6 +161,7 @@ def ingest_data():
         "confidence": record["confidence"],
         "message": record["message"],
         "prediction_source": record["prediction_source"],
+        "ml_enabled": record["ml_enabled"],
         "data_source": record["data_source"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -112,9 +175,10 @@ def ingest_data():
             "message": f"Firebase save failed: {exc}",
         }), 500
 
+    _, telegram_enabled = get_remote_config_and_alerts()
     alert_sent = False
     if record["status"] != "SAFE":
-        alert_sent = send_telegram_alert(record)
+        alert_sent = send_telegram_alert(record, enabled=telegram_enabled)
 
     record_with_key = {**record, "firebase_key": firebase_key}
     latest_reading = record_with_key
