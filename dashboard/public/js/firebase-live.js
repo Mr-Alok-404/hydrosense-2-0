@@ -4,8 +4,7 @@ import {
   ref,
   onValue,
   set,
-  query,
-  limitToLast
+  remove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import { firebaseConfig, DEVICE_ID } from "./firebase-config.js";
 
@@ -76,24 +75,41 @@ window.saveHydroSenseConfig = async function saveHydroSenseConfig(nextConfig) {
   return payload;
 };
 
+// Expose guarded database log cleaner to dashboard.js
+window.clearHydroSenseStoredLogs = async function clearHydroSenseStoredLogs(targetDeviceId, alsoClearLatest = false) {
+  const cleanId = String(targetDeviceId || "").trim();
+  if (!cleanId) {
+    throw new Error("Target Device ID is required.");
+  }
+  await remove(ref(db, `readings/${cleanId}`));
+  if (alsoClearLatest) {
+    await remove(ref(db, `latest/${cleanId}`));
+  }
+  return { clearedDevice: cleanId, alsoClearLatest };
+};
+
 // Track all device IDs seen under latest/
 onValue(ref(db, "latest"), (snapshot) => {
   const allLatest = snapshot.val() || {};
   const deviceIds = Object.keys(allLatest);
-  window.dispatchEvent(new CustomEvent("hydrosense:devices", { detail: deviceIds.length ? deviceIds : [DEVICE_ID] }));
+  window.dispatchEvent(new CustomEvent("hydrosense:devices", {
+    detail: deviceIds.length ? deviceIds : [DEVICE_ID]
+  }));
 });
 
 // 1. Live Latest Listener for primary DEVICE_ID
 onValue(ref(db, `latest/${DEVICE_ID}`), (snapshot) => {
   const val = snapshot.val();
-  if (!val) return;
+  if (!val) {
+    window.dispatchEvent(new CustomEvent("hydrosense:latest", { detail: null }));
+    return;
+  }
   const record = normalizeRecord(val);
   window.dispatchEvent(new CustomEvent("hydrosense:latest", { detail: record }));
 });
 
-// 2. Historical Readings Listener (Last 300 entries for charts, date filter, alerts & CSV export)
-const histQuery = query(ref(db, `readings/${DEVICE_ID}`), limitToLast(300));
-onValue(histQuery, (snapshot) => {
+// 2. Full Historical Readings Listener (All entries under readings/<DEVICE_ID>)
+onValue(ref(db, `readings/${DEVICE_ID}`), (snapshot) => {
   const rawObj = snapshot.val();
   if (!rawObj) {
     window.dispatchEvent(new CustomEvent("hydrosense:history", { detail: [] }));

@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     const MAX_STALE_MS = 30000;
+    const PRIMARY_DEVICE_ID = 'HYDRO_ESP32_01';
 
     let activeConfig = {
         minPh: 6.5,
@@ -9,7 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
         telegramEnabled: true
     };
     let currentData = {
-        device_id: 'HYDRO_ESP32_01',
+        device_id: PRIMARY_DEVICE_ID,
         temp: null,
         ph: null,
         tds: null,
@@ -22,7 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
         wifi_ssid: null,
         wifi_rssi: null
     };
-    let detectedDevices = ['HYDRO_ESP32_01'];
+    let detectedDevices = [PRIMARY_DEVICE_ID];
     let historyCache = [];
     let csvSelectedRows = [];
     let lastProcessedTimestamp = null;
@@ -30,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let customStartDate = null;
     let customEndDate = null;
     let showSsidUnmasked = false;
+    let captchaExpectedAnswer = 0;
 
     const yearEl = document.getElementById('copyrightYear');
     if (yearEl) {
@@ -48,38 +50,46 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 2. View Switching Logic
-    const navItems = document.querySelectorAll('.nav-item');
-    const viewSections = document.querySelectorAll('.view-section');
+    // 2. View Switching Helper
+    function openView(targetId) {
+        const navItems = document.querySelectorAll('.nav-item');
+        const viewSections = document.querySelectorAll('.view-section');
 
-    navItems.forEach(item => {
+        navItems.forEach(nav => {
+            nav.classList.toggle('active', nav.getAttribute('data-target') === targetId);
+        });
+
+        const activeNav = Array.from(navItems).find(nav => nav.getAttribute('data-target') === targetId);
+        const tabName = activeNav ? activeNav.innerText.trim() : 'Dashboard';
+        const isOnlineNow = isDeviceOnline();
+        const badgeClass = isOnlineNow ? 'badge' : 'badge offline-badge';
+        const badgeText = isOnlineNow ? 'Live' : 'Offline';
+        const titleHtml = tabName.includes('Dashboard')
+            ? `${tabName} <span class="${badgeClass}" id="liveBadge">${badgeText}</span>`
+            : tabName;
+
+        const pageTitleEl = document.getElementById('pageTitle');
+        if (pageTitleEl) pageTitleEl.innerHTML = titleHtml;
+
+        viewSections.forEach(view => {
+            view.classList.toggle('active-view', view.id === targetId);
+            view.classList.toggle('hidden-view', view.id !== targetId);
+        });
+
+        if (targetId === 'trends-view') renderTrendsAndLogs();
+        if (targetId === 'alerts-view') renderAlertsTable();
+        if (targetId === 'devices-view') syncDevicePresenceUI();
+        if (targetId === 'workflow-view') renderLiveWorkflow();
+
+        [mainChart, historyChart].forEach(c => { if (c) c.resize(); });
+        if (window.innerWidth <= 768 && sidebar) sidebar.classList.remove('open');
+    }
+
+    document.querySelectorAll('.nav-item').forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
-            navItems.forEach(nav => nav.classList.remove('active'));
-            item.classList.add('active');
-
-            const tabName = item.innerText.trim();
-            const isOnlineNow = isDeviceOnline();
-            const badgeClass = isOnlineNow ? 'badge' : 'badge offline-badge';
-            const badgeText = isOnlineNow ? 'Live' : 'Offline';
-            const titleHtml = tabName.includes('Dashboard')
-                ? `${tabName} <span class="${badgeClass}" id="liveBadge">${badgeText}</span>`
-                : tabName;
-            document.getElementById('pageTitle').innerHTML = titleHtml;
-
             const targetId = item.getAttribute('data-target');
-            viewSections.forEach(view => {
-                view.classList.toggle('active-view', view.id === targetId);
-                view.classList.toggle('hidden-view', view.id !== targetId);
-            });
-
-            if (targetId === 'trends-view') renderTrendsAndLogs();
-            if (targetId === 'alerts-view') renderAlertsTable();
-            if (targetId === 'devices-view') syncDevicePresenceUI();
-            if (targetId === 'workflow-view') renderLiveWorkflow();
-
-            [mainChart, historyChart].forEach(c => { if (c) c.resize(); });
-            if (window.innerWidth <= 768 && sidebar) sidebar.classList.remove('open');
+            if (targetId) openView(targetId);
         });
     });
 
@@ -128,7 +138,189 @@ document.addEventListener('DOMContentLoaded', () => {
         [mainChart, wqiDoughnut, miniTemp, miniPh, miniTds, miniTurb, historyChart].forEach(c => { if (c) c.update(); });
     });
 
-    // 5. Device Presence & Metadata UI
+    // 5. Hidden Operator Control Modal (Triggered via Operator Profile Icon)
+    function generateNewCaptcha() {
+        const a = Math.floor(Math.random() * 8) + 2;
+        const b = Math.floor(Math.random() * 8) + 1;
+        captchaExpectedAnswer = a + b;
+        const qEl = document.getElementById('opCaptchaQuestion');
+        if (qEl) qEl.innerText = `${a} + ${b} = ?`;
+        const ansEl = document.getElementById('opCaptchaInput');
+        if (ansEl) ansEl.value = '';
+    }
+
+    function buildOperatorModal() {
+        if (document.getElementById('operatorModalOverlay')) return;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'operatorModalOverlay';
+        overlay.style.cssText = [
+            'position:fixed', 'inset:0', 'background:rgba(2,6,23,0.72)',
+            'display:none', 'align-items:center', 'justify-content:center',
+            'z-index:2500', 'padding:16px'
+        ].join(';');
+
+        overlay.innerHTML = `
+            <div id="operatorModalCard" style="background:var(--bg-panel);color:var(--text-main);border:1px solid var(--border-color);border-radius:12px;max-width:460px;width:100%;padding:20px;box-shadow:0 20px 45px rgba(0,0,0,0.45);display:flex;flex-direction:column;gap:14px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border-color);padding-bottom:10px;">
+                    <div>
+                        <h3 style="font-size:1.05rem;font-weight:700;">Operator Controls</h3>
+                        <p style="font-size:0.78rem;color:var(--text-muted);margin-top:2px;">Guarded actions &amp; quick system shortcuts</p>
+                    </div>
+                    <button type="button" id="closeOperatorModalBtn" class="icon-btn" aria-label="Close Operator Controls"><i class="fas fa-times"></i></button>
+                </div>
+
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button type="button" id="opJumpSettingsBtn" class="btn-outline btn-sm"><i class="fas fa-sliders-h"></i> BIS &amp; Bot Settings</button>
+                    <button type="button" id="opJumpDevicesBtn" class="btn-outline btn-sm"><i class="fas fa-microchip"></i> Device Specs</button>
+                    <button type="button" id="opToggleSsidModalBtn" class="btn-outline btn-sm"><i class="fas fa-wifi"></i> Toggle SSID Mask</button>
+                </div>
+
+                <div style="border-top:1px solid var(--border-color);padding-top:12px;display:flex;flex-direction:column;gap:10px;">
+                    <div style="font-size:0.88rem;font-weight:700;color:var(--accent-danger);">
+                        <i class="fas fa-trash-alt"></i> Clear Stored Logs (Database Cleanup)
+                    </div>
+                    <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.4;">
+                        To prevent accidental deletion before real sensor calibration, confirm the exact Device ID (<strong>${PRIMARY_DEVICE_ID}</strong>) and solve the check below.
+                    </p>
+                    <div class="form-group">
+                        <label for="opConfirmDeviceInput">Confirm Device ID</label>
+                        <input type="text" id="opConfirmDeviceInput" class="form-control" placeholder="Type ${PRIMARY_DEVICE_ID}" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="opCaptchaInput">Verification Check (<span id="opCaptchaQuestion"></span>)</label>
+                        <input type="number" id="opCaptchaInput" class="form-control" placeholder="Enter sum">
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:var(--text-muted);cursor:pointer;">
+                        <input type="checkbox" id="opClearLatestChk"> Also clear <code>latest/${PRIMARY_DEVICE_ID}</code> snapshot
+                    </label>
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                        <button type="button" id="opExecuteClearBtn" class="btn-primary btn-sm" style="background:var(--accent-danger);"><i class="fas fa-broom"></i> Clear Stored Logs</button>
+                        <span id="opActionStatus" class="form-status"></span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        const closeModal = () => {
+            overlay.style.display = 'none';
+            const st = document.getElementById('opActionStatus');
+            if (st) st.innerText = '';
+        };
+
+        document.getElementById('closeOperatorModalBtn')?.addEventListener('click', closeModal);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeModal();
+        });
+
+        document.getElementById('opJumpSettingsBtn')?.addEventListener('click', () => {
+            closeModal();
+            openView('settings-view');
+        });
+
+        document.getElementById('opJumpDevicesBtn')?.addEventListener('click', () => {
+            closeModal();
+            openView('devices-view');
+        });
+
+        document.getElementById('opToggleSsidModalBtn')?.addEventListener('click', () => {
+            showSsidUnmasked = !showSsidUnmasked;
+            syncDevicePresenceUI();
+            const st = document.getElementById('opActionStatus');
+            if (st) {
+                st.style.color = 'var(--accent-primary)';
+                st.innerText = showSsidUnmasked ? 'SSID unmasked in Device Mgt.' : 'SSID masked in Device Mgt.';
+            }
+        });
+
+        document.getElementById('opExecuteClearBtn')?.addEventListener('click', async () => {
+            const st = document.getElementById('opActionStatus');
+            const typedId = (document.getElementById('opConfirmDeviceInput')?.value || '').trim();
+            const captchaVal = Number(document.getElementById('opCaptchaInput')?.value);
+            const alsoLatest = Boolean(document.getElementById('opClearLatestChk')?.checked);
+
+            if (typedId !== PRIMARY_DEVICE_ID) {
+                if (st) {
+                    st.style.color = 'var(--accent-danger)';
+                    st.innerText = `Device ID mismatch. Type exact: ${PRIMARY_DEVICE_ID}`;
+                }
+                return;
+            }
+
+            if (Number.isNaN(captchaVal) || captchaVal !== captchaExpectedAnswer) {
+                if (st) {
+                    st.style.color = 'var(--accent-danger)';
+                    st.innerText = 'Incorrect verification answer.';
+                }
+                generateNewCaptcha();
+                return;
+            }
+
+            if (typeof window.clearHydroSenseStoredLogs !== 'function') {
+                if (st) {
+                    st.style.color = 'var(--accent-warning)';
+                    st.innerText = 'Firebase database cleaner not ready.';
+                }
+                return;
+            }
+
+            try {
+                if (st) {
+                    st.style.color = 'var(--text-muted)';
+                    st.innerText = 'Clearing stored logs...';
+                }
+                await window.clearHydroSenseStoredLogs(PRIMARY_DEVICE_ID, alsoLatest);
+                historyCache = [];
+                csvSelectedRows = [];
+                if (alsoLatest) {
+                    currentData = {
+                        ...currentData,
+                        temp: null,
+                        ph: null,
+                        tds: null,
+                        turb: null,
+                        status: 'WAITING',
+                        timestampMs: null,
+                        timestamp: null
+                    };
+                    lastProcessedTimestamp = null;
+                    document.getElementById('val-temp').innerText = '--';
+                    document.getElementById('val-ph').innerText = '--';
+                    document.getElementById('val-tds').innerText = '--';
+                    document.getElementById('val-turb').innerText = '--';
+                    document.getElementById('wqiLabelTxt').innerText = 'WAITING';
+                    syncDevicePresenceUI();
+                }
+                renderTrendsAndLogs();
+                renderAlertsTable();
+                const devInput = document.getElementById('opConfirmDeviceInput');
+                if (devInput) devInput.value = '';
+                generateNewCaptcha();
+                if (st) {
+                    st.style.color = 'var(--accent-success)';
+                    st.innerText = 'Stored logs cleared from Firebase.';
+                }
+            } catch (err) {
+                if (st) {
+                    st.style.color = 'var(--accent-danger)';
+                    st.innerText = `Clear failed: ${err.message}`;
+                }
+            }
+        });
+    }
+
+    buildOperatorModal();
+
+    document.querySelector('.user-profile')?.addEventListener('click', () => {
+        buildOperatorModal();
+        generateNewCaptcha();
+        const overlay = document.getElementById('operatorModalOverlay');
+        if (overlay) overlay.style.display = 'flex';
+    });
+
+    // 6. Device Presence & Metadata UI
     function isDeviceOnline() {
         if (!currentData.timestampMs) return false;
         return (Date.now() - currentData.timestampMs) <= MAX_STALE_MS;
@@ -202,7 +394,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setInterval(syncDevicePresenceUI, 5000);
 
-    // 6. Chart Setups
+    // 7. Chart Setups
     Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
     const hideScales = { x: { display: false }, y: { display: false } };
     const miniChartOpts = {
@@ -269,13 +461,46 @@ document.addEventListener('DOMContentLoaded', () => {
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
     });
 
-    // Historical Graph (Displays Stored Readings Directly) + CSV Export Range Selector
+    // Historical Graph (Displays Stored Readings Directly) + Dynamic CSV Count & Size
     const ctxHist = document.getElementById('historyChart').getContext('2d');
     const historyChart = new Chart(ctxHist, {
         type: 'bar',
         data: { labels: [], datasets: [{ label: 'Sensor Value', data: [], backgroundColor: '#a855f7', borderRadius: 6 }] },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
     });
+
+    function buildCsvString(rows) {
+        const headers = ['DateTime', 'Device_ID', 'Temperature_C', 'pH', 'TDS_ppm', 'Turbidity_NTU', 'Status', 'Data_Source'];
+        const csvLines = [headers.join(',')];
+        rows.forEach(r => {
+            const cols = [
+                `"${new Date(r.timestampMs).toLocaleString().replace(/"/g, '""')}"`,
+                `"${r.device_id}"`,
+                r.temp,
+                r.ph,
+                r.tds,
+                r.turbidity,
+                `"${r.status}"`,
+                `"${r.data_source}"`
+            ];
+            csvLines.push(cols.join(','));
+        });
+        return csvLines.join('\n');
+    }
+
+    function formatByteSize(bytes) {
+        if (!bytes || bytes <= 0) return '0 KB';
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+
+    function updateCsvButtonMeta(rows) {
+        const csvCountEl = document.getElementById('csvExportCount');
+        if (!csvCountEl) return;
+        const csvText = buildCsvString(rows);
+        const approxBytes = new Blob([csvText], { type: 'text/csv;charset=utf-8;' }).size;
+        csvCountEl.innerText = `${rows.length} rows • ${formatByteSize(approxBytes)}`;
+    }
 
     function getCsvExportRows() {
         let rows = [...historyCache];
@@ -307,6 +532,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!historyCache.length) {
             tbody.innerHTML = '<tr><td colspan="8">No Firebase records available.</td></tr>';
+            updateCsvButtonMeta([]);
             return;
         }
 
@@ -326,8 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </tr>`;
         }).join('');
 
-        const csvCountEl = document.getElementById('csvExportCount');
-        if (csvCountEl) csvCountEl.innerText = String(rows.length);
+        updateCsvButtonMeta(rows);
     }
 
     function renderTrendsAndLogs() {
@@ -398,22 +623,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('exportCsvBtn')?.addEventListener('click', () => {
         const rows = getCsvExportRows();
-        const headers = ['DateTime', 'Device_ID', 'Temperature_C', 'pH', 'TDS_ppm', 'Turbidity_NTU', 'Status', 'Data_Source'];
-        const csvLines = [headers.join(',')];
-        rows.forEach(r => {
-            const cols = [
-                `"${new Date(r.timestampMs).toLocaleString().replace(/"/g, '""')}"`,
-                `"${r.device_id}"`,
-                r.temp,
-                r.ph,
-                r.tds,
-                r.turbidity,
-                `"${r.status}"`,
-                `"${r.data_source}"`
-            ];
-            csvLines.push(cols.join(','));
-        });
-        const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const csvContent = buildCsvString(rows);
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -584,7 +795,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function applyReadingToUI(data, appendToCharts = true) {
         currentData = {
-            device_id: data.device_id || 'HYDRO_ESP32_01',
+            device_id: data.device_id || PRIMARY_DEVICE_ID,
             temp: data.temp,
             ph: data.ph,
             tds: data.tds,
@@ -654,7 +865,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // 7. Dynamic Config Listener & Form Submit
+    // 8. Dynamic Config Listener & Form Submit
     const settingsForm = document.getElementById('settingsForm');
     const settingsStatus = document.getElementById('settingsSaveStatus');
 
@@ -739,7 +950,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 8. Listen to Firebase History Event
+    // 9. Listen to Firebase History Event
     window.addEventListener('hydrosense:history', (e) => {
         const list = e.detail || [];
         historyCache = list;
@@ -777,7 +988,7 @@ document.addEventListener('DOMContentLoaded', () => {
         syncDevicePresenceUI();
     });
 
-    // 9. Listen to Firebase Live Latest Event
+    // 10. Listen to Firebase Live Latest Event
     window.addEventListener('hydrosense:latest', (e) => {
         const data = e.detail;
         if (!data) return;
@@ -788,7 +999,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applyReadingToUI(data, !isFirstLoad);
     });
 
-    // 10. Report Generation (PDF Export — Without Confidence Score)
+    // 11. Report Generation (PDF Export — Without Confidence Score)
     window.generateReport = function () {
         const period = document.getElementById('reportPeriod').value;
         const signatoryName = document.getElementById('reportSignatoryName').value;
