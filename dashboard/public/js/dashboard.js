@@ -718,32 +718,54 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function renderLiveWorkflow() {
+function renderLiveWorkflow() {
         const diagMsg = document.getElementById('simDiagnosticMsg');
+        const c1 = document.getElementById('conn-1');
         const c2 = document.getElementById('conn-2');
+        c1?.classList.remove('connector-broken');
         c2?.classList.remove('connector-broken');
 
         const online = isDeviceOnline();
         const hasReading = currentData.timestampMs !== null;
         const isPotable = currentData.status === 'POTABLE';
 
-        setNodeState('node-sensors', 'flowBadgeSensors', hasReading ? 'ok' : 'warn', hasReading ? 'Reporting' : 'Awaiting');
-        setNodeState('node-esp32', 'flowBadgeEsp', online ? 'ok' : 'fault', online ? 'Online' : 'Offline');
-        setNodeState('node-rules', 'flowBadgeRules', hasReading ? (isPotable ? 'ok' : 'fault') : 'warn', hasReading ? (isPotable ? 'Within Limits' : 'Exceeds Limit') : 'Standby');
-        setNodeState('node-firebase', 'flowBadgeFirebase', 'ok', 'Synced');
-        setNodeState('node-ui-alert', 'flowBadgeAlert', hasReading ? (isPotable ? 'ok' : 'warn') : 'ok', activeConfig.telegramEnabled ? 'UI + Bot Ready' : 'UI Only');
+        if (!hasReading) {
+            setNodeState('node-sensors', 'flowBadgeSensors', 'warn', 'Awaiting');
+            setNodeState('node-esp32', 'flowBadgeEsp', 'fault', 'Offline');
+            setNodeState('node-rules', 'flowBadgeRules', 'warn', 'Standby');
+            setNodeState('node-firebase', 'flowBadgeFirebase', 'ok', 'Connected');
+            setNodeState('node-ui-alert', 'flowBadgeAlert', 'ok', activeConfig.telegramEnabled ? 'UI + Bot Ready' : 'UI Only');
+            if (c1) c1.classList.add('connector-broken');
+            if (c2) c2.classList.add('connector-broken');
+            if (diagMsg) diagMsg.innerText = 'Firebase RTDB is connected; waiting for sensor telemetry.';
+            return;
+        }
 
-        if (!online && c2) c2.classList.add('connector-broken');
+        if (!online) {
+            setNodeState('node-sensors', 'flowBadgeSensors', 'warn', 'Unreachable');
+            setNodeState('node-esp32', 'flowBadgeEsp', 'fault', 'Offline');
+            setNodeState('node-rules', 'flowBadgeRules', 'warn', `Last: ${currentData.status}`);
+            setNodeState('node-firebase', 'flowBadgeFirebase', 'ok', 'Cached');
+            setNodeState('node-ui-alert', 'flowBadgeAlert', 'warn', 'Device Offline');
+            if (c1) c1.classList.add('connector-broken');
+            if (c2) c2.classList.add('connector-broken');
+
+            const secAgo = Math.round((Date.now() - currentData.timestampMs) / 1000);
+            if (diagMsg) {
+                diagMsg.innerText = `ESP32 is currently Offline (last reading was ${secAgo}s ago), so live sensor state is unreachable. Last stored status: ${currentData.status}.`;
+            }
+            return;
+        }
+
+        // Device is genuinely Online (within 30s)
+        setNodeState('node-sensors', 'flowBadgeSensors', 'ok', 'Reporting');
+        setNodeState('node-esp32', 'flowBadgeEsp', 'ok', 'Online');
+        setNodeState('node-rules', 'flowBadgeRules', isPotable ? 'ok' : 'fault', isPotable ? 'Within Limits' : 'Exceeds Limit');
+        setNodeState('node-firebase', 'flowBadgeFirebase', 'ok', 'Synced');
+        setNodeState('node-ui-alert', 'flowBadgeAlert', isPotable ? 'ok' : 'warn', activeConfig.telegramEnabled ? 'UI + Bot Ready' : 'UI Only');
 
         if (diagMsg) {
-            if (!hasReading) {
-                diagMsg.innerText = 'Firebase RTDB is connected; waiting for sensor telemetry.';
-            } else if (online) {
-                diagMsg.innerText = `ESP32 is online (last reading ${new Date(currentData.timestampMs).toLocaleTimeString()}); status is ${currentData.status}.`;
-            } else {
-                const secAgo = Math.round((Date.now() - currentData.timestampMs) / 1000);
-                diagMsg.innerText = `ESP32 is currently Offline (last reading was ${secAgo}s ago). Latest stored status is ${currentData.status}.`;
-            }
+            diagMsg.innerText = `ESP32 is online (last reading ${new Date(currentData.timestampMs).toLocaleTimeString()}); status is ${currentData.status}.`;
         }
     }
 
