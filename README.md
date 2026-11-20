@@ -5,7 +5,7 @@
 
 <!-- Animated Typing Headline -->
 <a href="https://hydrosense-2-0.web.app">
-  <img src="https://readme-typing-svg.demolab.com?font=Montserrat&weight=700&size=28&duration=3000&pause=1000&color=06B6D4&center=true&vCenter=true&width=720&lines=💧+HYDROSENSE+2.0;Real-Time+IoT+%26+Edge-AI+Water+Monitoring;Dual-Stage+BIS+Rules+%2B+LightGBM+Screening;Instant+Telegram+Alerts+%26+Live+Command+Center" alt="HydroSense 2.0 Animated Header" />
+  <img src="https://readme-typing-svg.demolab.com?font=Montserrat&weight=700&size=28&duration=3000&pause=1000&color=06B6D4&center=true&vCenter=true&width=720&lines=HYDROSENSE+2.0;Real-Time+IoT+%26+Edge-AI+Water+Monitoring;Dual-Stage+BIS+Rules+%2B+LightGBM+Screening;Instant+Telegram+Alerts+%26+Live+Command+Center" alt="HydroSense 2.0 Animated Header" />
 </a>
 
 <p align="center">
@@ -208,7 +208,7 @@ firebase deploy --only hosting
 
 <div align="center">
 
-<sub>Built with ❤️ for Smart Water Quality Monitoring • <strong>HydroSense 2.0</strong></sub>
+<sub>Built for Smart Water Quality Monitoring • <strong>HydroSense 2.0</strong></sub>
 
 <!-- Animated Bottom Water-Wave Footer -->
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:06b6d4,50:0284c7,100:0f172a&height=90&section=footer" width="100%" />
