@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>HydroSense 2.0 Pro Elite Dashboard</title>
+    <title>HydroSense 2.0 Water Quality Monitor</title>
     <link rel="stylesheet" href="./css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body>
@@ -21,7 +23,7 @@
             <button id="mobileMenuBtn" class="icon-btn" aria-label="Toggle Menu"><i class="fas fa-bars"></i></button>
         </header>
 
-        <!-- Sidebar Navigation -->
+        <!-- Sidebar Navigation (Cleaned: Alerts, Device Mgt & Settings moved to Operator Profile) -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header desktop-only">
                 <img src="./assets/college_logo.png" alt="HydroSense Logo" class="brand-logo">
@@ -35,10 +37,7 @@
                 <a href="#" class="nav-item" data-target="realtime-view"><i class="fas fa-stream"></i> Real-Time Data</a>
                 <a href="#" class="nav-item" data-target="trends-view"><i class="fas fa-chart-area"></i> Analytics &amp; Logs</a>
                 <a href="#" class="nav-item" data-target="reports-view"><i class="fas fa-file-pdf"></i> Reports Export</a>
-                <a href="#" class="nav-item" data-target="alerts-view"><i class="fas fa-exclamation-triangle"></i> Alerts Log</a>
-                <a href="#" class="nav-item" data-target="devices-view"><i class="fas fa-microchip"></i> Device Mgt.</a>
                 <a href="#" class="nav-item" data-target="workflow-view"><i class="fas fa-project-diagram"></i> Live Workflow</a>
-                <a href="#" class="nav-item" data-target="settings-view"><i class="fas fa-sliders-h"></i> Settings</a>
             </nav>
         </aside>
 
@@ -52,41 +51,38 @@
                     <span class="date-picker desktop-only" id="currentDateTime"><i class="fas fa-calendar-alt"></i> Loading...</span>
                     <button class="icon-btn" onclick="alert('Connected to Firebase Realtime Database (hydrosense-2-0).')" title="Cloud Sync"><i class="fas fa-cloud"></i></button>
                     <button class="icon-btn" id="themeToggle" title="Toggle Theme"><i class="fas fa-moon"></i></button>
-                    <button class="icon-btn user-profile" title="Operator Profile"><i class="fas fa-user-circle"></i></button>
+                    <button class="icon-btn user-profile" id="operatorProfileBtn" title="Operator Controls (Device, Alerts &amp; Settings)"><i class="fas fa-user-circle"></i></button>
                 </div>
             </header>
 
             <!-- Views Container -->
             <div class="view-container">
 
-                <!-- VIEW 1: MAIN DASHBOARD -->
+                <!-- VIEW 1: MAIN DASHBOARD (Clean KPI Cards without Safe/Alert Pills) -->
                 <div id="dashboard-view" class="view-section active-view">
                     <div class="dashboard-grid">
                         <div class="kpi-card" id="card-temp">
                             <div class="kpi-header"><span class="kpi-title">Temperature</span><i class="fas fa-thermometer-half icon-cyan"></i></div>
                             <div class="kpi-value"><span id="val-temp">--</span> <span class="unit">°C</span></div>
-                            <div class="kpi-status status-normal">Waiting for Telemetry</div>
                             <div class="mini-chart-container"><canvas id="mini-temp"></canvas></div>
                         </div>
                         <div class="kpi-card" id="card-ph">
                             <div class="kpi-header"><span class="kpi-title">pH Level</span><i class="fas fa-tint icon-blue"></i></div>
                             <div class="kpi-value"><span id="val-ph">--</span> <span class="unit">pH</span></div>
-                            <div class="kpi-status status-normal">Waiting for Telemetry</div>
                             <div class="mini-chart-container"><canvas id="mini-ph"></canvas></div>
                         </div>
                         <div class="kpi-card" id="card-tds">
                             <div class="kpi-header"><span class="kpi-title">TDS</span><i class="fas fa-water icon-green"></i></div>
                             <div class="kpi-value"><span id="val-tds">--</span> <span class="unit">ppm</span></div>
-                            <div class="kpi-status status-normal">Waiting for Telemetry</div>
                             <div class="mini-chart-container"><canvas id="mini-tds"></canvas></div>
                         </div>
                         <div class="kpi-card" id="card-turb">
                             <div class="kpi-header"><span class="kpi-title">Turbidity</span><i class="fas fa-water icon-yellow"></i></div>
                             <div class="kpi-value"><span id="val-turb">--</span> <span class="unit">NTU</span></div>
-                            <div class="kpi-status status-normal">Waiting for Telemetry</div>
                             <div class="mini-chart-container"><canvas id="mini-turb"></canvas></div>
                         </div>
 
+                        <!-- Main Trend Chart -->
                         <div class="panel main-chart-panel span-3-cols">
                             <div class="panel-header">
                                 <h3>Water Quality Real-Time Telemetry</h3>
@@ -99,6 +95,7 @@
                             <div class="main-chart-container"><canvas id="mainTrendChart"></canvas></div>
                         </div>
 
+                        <!-- Potability Status Card -->
                         <div class="panel wqi-panel">
                             <div class="panel-header"><h3>Potability Status</h3></div>
                             <div class="wqi-container">
@@ -110,8 +107,8 @@
                                     </div>
                                 </div>
                                 <div class="wqi-legend">
-                                    <div class="wqi-leg-item"><span class="dot dot-exc"></span> Potable / Within Limits</div>
-                                    <div class="wqi-leg-item"><span class="dot dot-poor"></span> Non-Potable / Exceeds Limit</div>
+                                    <div class="wqi-leg-item"><span class="dot dot-exc"></span> Potable</div>
+                                    <div class="wqi-leg-item"><span class="dot dot-poor"></span> Non-Potable</div>
                                 </div>
                             </div>
                         </div>
@@ -135,11 +132,11 @@
                     </div>
                 </div>
 
-                <!-- VIEW 3: ANALYTICS TRENDS + CSV EXPORT RANGE -->
+                <!-- VIEW 3: ANALYTICS & LOGS (Lightweight: Top 25 Recent Rows + Full CSV Download) -->
                 <div id="trends-view" class="view-section hidden-view">
                     <div class="panel main-chart-panel">
                         <div class="panel-header">
-                            <h3>Historical Analytics (Firebase Stored Readings)</h3>
+                            <h3>Historical Analytics (Recent Telemetry)</h3>
                             <select class="custom-select" id="trendMetricSelect">
                                 <option value="ph">pH Levels</option>
                                 <option value="tds">TDS (ppm)</option>
@@ -148,7 +145,7 @@
                             </select>
                         </div>
 
-                        <div class="main-chart-container" style="height: 360px;">
+                        <div class="main-chart-container" style="height: 330px;">
                             <canvas id="historyChart"></canvas>
                         </div>
 
@@ -169,15 +166,15 @@
                             </div>
                             <div class="date-actions">
                                 <button type="button" class="btn-outline btn-sm" id="resetDateFilterBtn"><i class="fas fa-undo"></i> Reset</button>
-                                <button type="button" class="btn-primary btn-sm" id="exportCsvBtn"><i class="fas fa-file-csv"></i> Download CSV (<span id="csvExportCount">0</span>)</button>
+                                <button type="button" class="btn-primary btn-sm" id="exportCsvBtn"><i class="fas fa-file-csv"></i> Download CSV (<span id="csvExportCount">0 rows • 0 KB</span>)</button>
                             </div>
                         </div>
                     </div>
 
                     <div class="panel list-panel mt-3">
                         <div class="panel-header">
-                            <h3>Firebase Stored Telemetry Logs (<span id="filteredLogCount">0</span> records)</h3>
-                            <span class="text-muted" style="font-size:0.85rem;">Sorted newest first</span>
+                            <h3>Recent Telemetry Logs (Showing latest <span id="visibleLogCount">0</span> of <span id="filteredLogCount">0</span> stored)</h3>
+                            <span class="text-muted" style="font-size:0.85rem;">Use Download CSV above for full dataset</span>
                         </div>
                         <div class="table-responsive">
                             <table class="data-table">
@@ -201,149 +198,39 @@
                     </div>
                 </div>
 
-                <!-- VIEW 4: REPORTS EXPORT -->
+                <!-- VIEW 4: REPORTS EXPORT (Minimalist: Name Input + Last Sensor Reading + Download) -->
                 <div id="reports-view" class="view-section hidden-view">
-                    <div class="panel list-panel">
+                    <div class="panel list-panel" style="max-width: 640px;">
                         <div class="panel-header">
-                            <h3>Generate Water Quality Report</h3>
-                        </div>
-                        <div class="report-generator-container mt-3">
-                            <p class="text-muted">Export a clean water quality report with institute branding, signatory details, active BIS thresholds, and latest readings.</p>
-                            <div class="form-group mt-3" style="max-width: 320px;">
-                                <label>Report Period</label>
-                                <select class="form-control" id="reportPeriod">
-                                    <option value="1D">Last 24 Hours</option>
-                                    <option value="1W" selected>Last 7 Days</option>
-                                    <option value="1M">Last 30 Days</option>
-                                </select>
-                            </div>
-                            <div class="form-group mt-3" style="max-width: 320px;">
-                                <label>Authorized Signatory Name</label>
-                                <input type="text" class="form-control" id="reportSignatoryName" value="Dr. A. K. Sharma">
-                            </div>
-                            <div class="form-group mt-3" style="max-width: 320px;">
-                                <label>Designation</label>
-                                <input type="text" class="form-control" id="reportSignatoryDesig" value="Head of Department, ECE">
-                            </div>
-                            <button class="btn-primary mt-4" onclick="generateReport()"><i class="fas fa-file-pdf"></i> Download PDF Report</button>
+                            <h3>Reports Export</h3>
                         </div>
 
-                        <div id="reportTemplateWrapper" style="position: absolute; left: -9999px; top: 0;">
-                            <div id="reportTemplate" style="width: 794px; min-height: 1123px; background: white; color: black; padding: 60px; box-sizing: border-box; font-family: 'Times New Roman', Times, serif;">
-                                <div style="display:flex; justify-content: space-between; align-items:flex-start; border-bottom: 2px solid #003366; padding-bottom:20px; margin-bottom:30px;">
-                                    <img src="./assets/college_logo.png" alt="College Logo" style="height: 76px; width:auto; max-width:120px; object-fit:contain;">
-                                    <div style="text-align:right;">
-                                        <h1 style="margin:0; font-size:24px; color:#003366; text-transform:uppercase;">HydroSense 2.0 Edge-AI</h1>
-                                        <h2 style="margin:5px 0 0 0; font-size:18px; color:#444;">Water Quality Analysis Report</h2>
-                                        <p style="margin:5px 0 0 0; color:#666; font-size:14px;" id="pdfDate"></p>
-                                    </div>
+                        <div class="report-generator-container mt-3" style="display:flex;flex-direction:column;gap:16px;">
+                            <div class="form-group">
+                                <label for="reportSignatoryName">Name</label>
+                                <input type="text" class="form-control" id="reportSignatoryName" placeholder="Enter your name" value="Dr. A. K. Sharma">
+                            </div>
+
+                            <div style="border:1px solid var(--border-color);border-radius:10px;padding:14px;background:var(--bg-subtle);">
+                                <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px;">Latest Sensor Reading</div>
+                                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;font-size:0.95rem;">
+                                    <div><span class="text-muted">Temperature:</span> <strong id="repLastTemp">-- °C</strong></div>
+                                    <div><span class="text-muted">pH:</span> <strong id="repLastPh">--</strong></div>
+                                    <div><span class="text-muted">TDS:</span> <strong id="repLastTds">-- ppm</strong></div>
+                                    <div><span class="text-muted">Turbidity:</span> <strong id="repLastTurb">-- NTU</strong></div>
                                 </div>
+                            </div>
 
-                                <h3 style="margin-bottom: 10px; color:#003366; font-size:18px; border-bottom:1px solid #ccc; padding-bottom:5px;">1. Executive Summary</h3>
-                                <p style="line-height:1.6; font-size:14px; text-align:justify;">
-                                    This report presents water quality measurements acquired by the HydroSense 2.0 ESP32-WROOM node across Temperature, pH, TDS, and Turbidity sensors, evaluated against active threshold rules.
-                                </p>
-
-                                <h3 style="margin-top: 30px; margin-bottom: 10px; color:#003366; font-size:18px; border-bottom:1px solid #ccc; padding-bottom:5px;">2. Sensor Readings &amp; Threshold Comparison (<span id="pdfPeriod"></span>)</h3>
-                                <table style="width:100%; border-collapse: collapse; margin-top:15px; font-size:14px;">
-                                    <thead>
-                                        <tr style="background:#003366; color:white;">
-                                            <th style="padding:12px; border:1px solid #003366; text-align:left;">Parameter</th>
-                                            <th style="padding:12px; border:1px solid #003366; text-align:center;">Latest Value</th>
-                                            <th style="padding:12px; border:1px solid #003366; text-align:center;">Safe Range</th>
-                                            <th style="padding:12px; border:1px solid #003366; text-align:center;">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pdfTableBody"></tbody>
-                                </table>
-
-                                <h3 style="margin-top: 30px; margin-bottom: 10px; color:#003366; font-size:18px; border-bottom:1px solid #ccc; padding-bottom:5px;">3. Potability Classification</h3>
-                                <p style="line-height:1.6; font-size:14px;">
-                                    Sample Classification: <strong id="pdfVerdict" style="font-size:16px;">--</strong> | Evaluation Basis: <strong id="pdfBasis">Configured Thresholds &amp; Pipeline</strong>.
-                                </p>
-
-                                <div style="margin-top: 100px; display:flex; justify-content: space-between; align-items:flex-end;">
-                                    <div>
-                                        <p style="margin:0; font-size:12px; color:#777;">Device ID: HYDRO_ESP32_01</p>
-                                        <p style="margin:0; font-size:12px; color:#777;">Source: HydroSense Firebase Realtime Database</p>
-                                    </div>
-                                    <div style="text-align:center; width:250px;">
-                                        <p style="font-family: 'Brush Script MT', cursive; font-size: 32px; color: #000; margin: 0; border-bottom: 1px solid #000; padding-bottom: 5px; text-align:center;" id="pdfSign">Signature</p>
-                                        <p style="margin:8px 0 0 0; font-size:14px; font-weight:bold; text-transform:uppercase;" id="pdfNameOut"></p>
-                                        <p style="margin:2px 0 0 0; font-size:12px; color:#555;" id="pdfDesigOut"></p>
-                                    </div>
-                                </div>
+                            <div>
+                                <button class="btn-primary" type="button" onclick="generateReport()">
+                                    <i class="fas fa-file-pdf"></i> Download Report
+                                </button>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- VIEW 5: ALERTS LOG -->
-                <div id="alerts-view" class="view-section hidden-view">
-                    <div class="panel list-panel">
-                        <div class="panel-header">
-                            <h3>System &amp; Telegram Alerts Log (All Threshold &amp; Status Violations)</h3>
-                            <span style="color:var(--text-muted); font-size:0.9rem;">Telegram Alerts: <strong id="alertsBotStatusLabel">Checking...</strong></span>
-                        </div>
-                        <div class="table-responsive">
-                            <table class="data-table mt-3">
-                                <thead>
-                                    <tr>
-                                        <th>Timestamp</th>
-                                        <th>Violation Trigger</th>
-                                        <th>Actual Reading vs Active Limit</th>
-                                        <th>Status / Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="alertsTableBody">
-                                    <tr><td colspan="4">Loading alerts...</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- VIEW 6: DEVICES MGT -->
-                <div id="devices-view" class="view-section hidden-view">
-                    <div class="dashboard-grid">
-                        <div class="panel span-4-cols device-card">
-                            <div class="device-header">
-                                <i class="fas fa-microchip device-icon"></i>
-                                <div>
-                                    <h3>ESP32-WROOM Node A</h3>
-                                    <p class="text-muted">Hardware Specifications, Network Telemetry &amp; Live Diagnostics</p>
-                                </div>
-                                <span class="status-badge bg-danger ml-auto" id="deviceStatusBadge">Offline</span>
-                            </div>
-
-                            <div class="device-stats device-stats-3">
-                                <div class="d-stat"><span>Board Architecture</span><strong>ESP32-WROOM-32 (Dual Core)</strong></div>
-                                <div class="d-stat"><span>Primary Device ID</span><strong>HYDRO_ESP32_01</strong></div>
-                                <div class="d-stat"><span>Detected Nodes in DB</span><strong id="detectedDevicesList">HYDRO_ESP32_01</strong></div>
-
-                                <div class="d-stat"><span>IP Address</span><strong id="deviceIpAddress">Not reported in payload</strong></div>
-                                <div class="d-stat">
-                                    <span>Wi-Fi SSID (Network Name)</span>
-                                    <div class="inline-secret-row">
-                                        <strong id="deviceWifiSsid">Not reported in payload</strong>
-                                        <button type="button" class="btn-outline btn-xs" id="toggleSsidBtn">Show/Mask</button>
-                                    </div>
-                                </div>
-                                <div class="d-stat"><span>Wi-Fi Password</span><strong>Hidden for Security</strong></div>
-
-                                <div class="d-stat"><span>Wi-Fi Signal (RSSI)</span><strong id="deviceWifiRssi">--</strong></div>
-                                <div class="d-stat"><span>Last Telemetry Seen</span><strong id="deviceLastSeen">Never</strong></div>
-                                <div class="d-stat"><span>Connection State</span><strong id="deviceConnectionNote">No recent data (&gt;30s)</strong></div>
-
-                                <div class="d-stat"><span>Data Source</span><strong id="deviceDataSource">--</strong></div>
-                                <div class="d-stat"><span>Latest Classification</span><strong id="deviceLatestStatus">--</strong></div>
-                                <div class="d-stat"><span>Sensors Monitored</span><strong>Temp, pH, TDS, Turbidity</strong></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- VIEW 7: LIVE SYSTEM WORKFLOW -->
+                <!-- VIEW 5: LIVE SYSTEM WORKFLOW -->
                 <div id="workflow-view" class="view-section hidden-view">
                     <div class="panel list-panel">
                         <div class="panel-header">
@@ -399,50 +286,6 @@
                         <div class="sim-diagnostic-box mt-3" id="simDiagnosticBox">
                             <strong>Current Status:</strong> <span id="simDiagnosticMsg">Checking live telemetry stream...</span>
                         </div>
-                    </div>
-                </div>
-
-                <!-- VIEW 8: SETTINGS -->
-                <div id="settings-view" class="view-section hidden-view">
-                    <div class="panel list-panel" style="max-width: 640px;">
-                        <div class="panel-header">
-                            <h3>Dynamic BIS Thresholds &amp; Alert Configuration</h3>
-                        </div>
-                        <form class="settings-form mt-3" id="settingsForm">
-                            <div class="form-group">
-                                <label for="telegramEnabledSelect">Telegram Bot Alerts</label>
-                                <select id="telegramEnabledSelect" class="form-control">
-                                    <option value="true">Enabled (Send alerts on unsafe readings)</option>
-                                    <option value="false">Disabled (Pause Telegram alerts)</option>
-                                </select>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="minPhInput">Min Safe pH (BIS)</label>
-                                    <input type="number" step="0.1" id="minPhInput" class="form-control" value="6.5" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="maxPhInput">Max Safe pH (BIS)</label>
-                                    <input type="number" step="0.1" id="maxPhInput" class="form-control" value="8.5" required>
-                                </div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="maxTdsInput">Max Safe TDS (ppm)</label>
-                                    <input type="number" step="1" id="maxTdsInput" class="form-control" value="500" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="maxTurbInput">Max Safe Turbidity (NTU)</label>
-                                    <input type="number" step="0.1" id="maxTurbInput" class="form-control" value="5.0" required>
-                                </div>
-                            </div>
-                            <div class="form-actions-row">
-                                <button class="btn-primary" type="submit" id="saveSettingsBtn">
-                                    <i class="fas fa-save"></i> Save Configurations
-                                </button>
-                                <span id="settingsSaveStatus" class="form-status"></span>
-                            </div>
-                        </form>
                     </div>
                 </div>
 

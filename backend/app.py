@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -7,7 +8,11 @@ from flask_cors import CORS
 import requests
 
 from firebase_service import save_reading
-from services.alert_service import send_telegram_alert
+from services.alert_service import (
+    send_device_offline_alert,
+    send_device_online_alert,
+    send_telegram_alert,
+)
 from services.ml_service import DEFAULT_THRESHOLDS, evaluate_water_quality
 
 load_dotenv()
@@ -18,6 +23,8 @@ app = Flask(
     static_folder="../dashboard/static",
 )
 CORS(app)
+
+OFFLINE_TIMEOUT_SECONDS = int(os.getenv("DEVICE_OFFLINE_SECONDS", "35"))
 
 
 def is_ml_enabled() -> bool:
@@ -33,7 +40,6 @@ _rules_cache = {
 
 
 def get_remote_config_and_alerts() -> tuple[dict, bool]:
-    """Fetches dynamic thresholds & telegram toggle from Firebase RTDB with 10s cache + safe fallback."""
     now = time.time()
     if now - _rules_cache["fetched_at"] < 10.0:
         return dict(_rules_cache["thresholds"]), bool(_rules_cache["telegram_enabled"])
@@ -81,6 +87,38 @@ latest_reading = {
     "timestamp": None,
 }
 history_readings = []
+
+_presence_state = {
+    "last_seen_epoch": None,
+    "last_seen_str": None,
+    "device_id": "HYDRO_ESP32_01",
+    "offline_notified": False,
+}
+
+
+def _offline_watchdog_loop():
+    """Monitors telemetry gap and sends a distinct Telegram alert once when ESP32 goes offline."""
+    while True:
+        time.sleep(5)
+        last_epoch = _presence_state["last_seen_epoch"]
+        if last_epoch is None:
+            continue
+
+        gap = int(time.time() - last_epoch)
+        if gap > OFFLINE_TIMEOUT_SECONDS and not _presence_state["offline_notified"]:
+            _, telegram_enabled = get_remote_config_and_alerts()
+            sent = send_device_offline_alert(
+                device_id=_presence_state["device_id"],
+                last_seen_str=_presence_state["last_seen_str"] or "Unknown",
+                offline_seconds=gap,
+                enabled=telegram_enabled,
+            )
+            if sent:
+                _presence_state["offline_notified"] = True
+
+
+_watchdog_thread = threading.Thread(target=_offline_watchdog_loop, daemon=True)
+_watchdog_thread.start()
 
 
 def normalize_payload(data: dict) -> dict:
@@ -175,7 +213,27 @@ def ingest_data():
             "message": f"Firebase save failed: {exc}",
         }), 500
 
+    now_epoch = time.time()
+    was_offline = _presence_state["offline_notified"]
+    prev_epoch = _presence_state["last_seen_epoch"]
+    downtime_sec = int(now_epoch - prev_epoch) if (was_offline and prev_epoch is not None) else None
+
+    # Update presence state on fresh reading
+    _presence_state["last_seen_epoch"] = now_epoch
+    _presence_state["last_seen_str"] = record["timestamp"]
+    _presence_state["device_id"] = record["device_id"]
+    _presence_state["offline_notified"] = False
+
     _, telegram_enabled = get_remote_config_and_alerts()
+
+    online_alert_sent = False
+    if was_offline:
+        online_alert_sent = send_device_online_alert(
+            reading=record,
+            downtime_seconds=downtime_sec,
+            enabled=telegram_enabled,
+        )
+
     alert_sent = False
     if record["status"] != "SAFE":
         alert_sent = send_telegram_alert(record, enabled=telegram_enabled)
@@ -192,6 +250,7 @@ def ingest_data():
         "firebase_key": firebase_key,
         "firebase_enabled": firebase_enabled,
         "alert_sent": alert_sent,
+        "online_alert_sent": online_alert_sent,
     }), 200
 
 

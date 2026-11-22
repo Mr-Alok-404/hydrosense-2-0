@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     const MAX_STALE_MS = 30000;
     const PRIMARY_DEVICE_ID = 'HYDRO_ESP32_01';
+    const TABLE_PREVIEW_LIMIT = 25;
 
     let activeConfig = {
         minPh: 6.5,
@@ -15,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ph: null,
         tds: null,
         turb: null,
+        turbidity: null,
         status: 'WAITING',
         timestampMs: null,
         timestamp: null,
@@ -25,7 +27,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     let detectedDevices = [PRIMARY_DEVICE_ID];
     let historyCache = [];
-    let csvSelectedRows = [];
     let lastProcessedTimestamp = null;
     let currentCsvPreset = '7D';
     let customStartDate = null;
@@ -77,8 +78,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         if (targetId === 'trends-view') renderTrendsAndLogs();
-        if (targetId === 'alerts-view') renderAlertsTable();
-        if (targetId === 'devices-view') syncDevicePresenceUI();
         if (targetId === 'workflow-view') renderLiveWorkflow();
 
         [mainChart, historyChart].forEach(c => { if (c) c.resize(); });
@@ -138,7 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
         [mainChart, wqiDoughnut, miniTemp, miniPh, miniTds, miniTurb, historyChart].forEach(c => { if (c) c.update(); });
     });
 
-    // 5. Hidden Operator Control Modal (Triggered via Operator Profile Icon)
+    // 5. Operator Console Modal (Houses Device Mgt, Alerts Log, Dynamic Settings & Guarded Cleanup)
     function generateNewCaptcha() {
         const a = Math.floor(Math.random() * 8) + 2;
         const b = Math.floor(Math.random() * 8) + 1;
@@ -149,52 +148,149 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ansEl) ansEl.value = '';
     }
 
+    function formatMaskedSsid(ssid) {
+        if (!ssid) return 'Not reported in payload';
+        if (showSsidUnmasked) return ssid;
+        if (ssid.length <= 2) return `${ssid[0]}*`;
+        return `${ssid.slice(0, 2)}${'*'.repeat(Math.min(8, ssid.length - 2))}`;
+    }
+
     function buildOperatorModal() {
         if (document.getElementById('operatorModalOverlay')) return;
 
         const overlay = document.createElement('div');
         overlay.id = 'operatorModalOverlay';
         overlay.style.cssText = [
-            'position:fixed', 'inset:0', 'background:rgba(2,6,23,0.72)',
+            'position:fixed', 'inset:0', 'background:rgba(2,6,23,0.76)',
             'display:none', 'align-items:center', 'justify-content:center',
             'z-index:2500', 'padding:16px'
         ].join(';');
 
         overlay.innerHTML = `
-            <div id="operatorModalCard" style="background:var(--bg-panel);color:var(--text-main);border:1px solid var(--border-color);border-radius:12px;max-width:460px;width:100%;padding:20px;box-shadow:0 20px 45px rgba(0,0,0,0.45);display:flex;flex-direction:column;gap:14px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border-color);padding-bottom:10px;">
+            <div style="background:var(--bg-panel);color:var(--text-main);border:1px solid var(--border-color);border-radius:12px;max-width:760px;width:100%;max-height:90vh;overflow-y:auto;padding:22px;box-shadow:0 20px 50px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border-color);padding-bottom:12px;">
                     <div>
-                        <h3 style="font-size:1.05rem;font-weight:700;">Operator Controls</h3>
-                        <p style="font-size:0.78rem;color:var(--text-muted);margin-top:2px;">Guarded actions &amp; quick system shortcuts</p>
+                        <h3 style="font-size:1.15rem;font-weight:700;">Operator Control Console</h3>
+                        <p style="font-size:0.8rem;color:var(--text-muted);margin-top:2px;">Device Management, Alerts Log, BIS Thresholds &amp; Database Maintenance</p>
                     </div>
-                    <button type="button" id="closeOperatorModalBtn" class="icon-btn" aria-label="Close Operator Controls"><i class="fas fa-times"></i></button>
+                    <button type="button" id="closeOperatorModalBtn" class="icon-btn" aria-label="Close"><i class="fas fa-times"></i></button>
                 </div>
 
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button type="button" id="opJumpSettingsBtn" class="btn-outline btn-sm"><i class="fas fa-sliders-h"></i> BIS &amp; Bot Settings</button>
-                    <button type="button" id="opJumpDevicesBtn" class="btn-outline btn-sm"><i class="fas fa-microchip"></i> Device Specs</button>
-                    <button type="button" id="opToggleSsidModalBtn" class="btn-outline btn-sm"><i class="fas fa-wifi"></i> Toggle SSID Mask</button>
+                <!-- Operator Sub-Tabs -->
+                <div style="display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border-color);padding-bottom:10px;">
+                    <button type="button" class="btn-filter active" data-op-tab="op-tab-device"><i class="fas fa-microchip"></i> Device Mgt.</button>
+                    <button type="button" class="btn-filter" data-op-tab="op-tab-alerts"><i class="fas fa-exclamation-triangle"></i> Alerts Log</button>
+                    <button type="button" class="btn-filter" data-op-tab="op-tab-settings"><i class="fas fa-sliders-h"></i> Settings</button>
+                    <button type="button" class="btn-filter" data-op-tab="op-tab-cleanup"><i class="fas fa-broom"></i> Clear Data</button>
                 </div>
 
-                <div style="border-top:1px solid var(--border-color);padding-top:12px;display:flex;flex-direction:column;gap:10px;">
-                    <div style="font-size:0.88rem;font-weight:700;color:var(--accent-danger);">
-                        <i class="fas fa-trash-alt"></i> Clear Stored Logs (Database Cleanup)
+                <!-- TAB 1: DEVICE MGT -->
+                <div id="op-tab-device" class="op-tab-panel" style="display:flex;flex-direction:column;gap:12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <strong>ESP32-WROOM Node A (${PRIMARY_DEVICE_ID})</strong>
+                        <span class="status-badge bg-danger" id="opDeviceStatusBadge">Offline</span>
                     </div>
-                    <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.4;">
-                        To prevent accidental deletion before real sensor calibration, confirm the exact Device ID (<strong>${PRIMARY_DEVICE_ID}</strong>) and solve the check below.
+                    <div class="device-stats device-stats-3">
+                        <div class="d-stat"><span>Architecture</span><strong>ESP32-WROOM-32</strong></div>
+                        <div class="d-stat"><span>Detected Nodes</span><strong id="opDetectedDevices">${PRIMARY_DEVICE_ID}</strong></div>
+                        <div class="d-stat"><span>Data Source</span><strong id="opDeviceSource">--</strong></div>
+                        <div class="d-stat"><span>IP Address</span><strong id="opDeviceIp">Not reported</strong></div>
+                        <div class="d-stat">
+                            <span>Wi-Fi SSID</span>
+                            <div class="inline-secret-row">
+                                <strong id="opDeviceSsid">Not reported</strong>
+                                <button type="button" class="btn-outline btn-xs" id="opToggleSsidBtn">Show/Mask</button>
+                            </div>
+                        </div>
+                        <div class="d-stat"><span>Wi-Fi Password</span><strong>Hidden for Security</strong></div>
+                        <div class="d-stat"><span>Signal (RSSI)</span><strong id="opDeviceRssi">--</strong></div>
+                        <div class="d-stat"><span>Last Telemetry Seen</span><strong id="opDeviceLastSeen">Never</strong></div>
+                        <div class="d-stat"><span>Connection State</span><strong id="opDeviceConnNote">No recent data</strong></div>
+                    </div>
+                </div>
+
+                <!-- TAB 2: ALERTS LOG -->
+                <div id="op-tab-alerts" class="op-tab-panel" style="display:none;flex-direction:column;gap:10px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                        <span style="font-size:0.88rem;color:var(--text-muted);">Recent threshold &amp; status violations (latest 30)</span>
+                        <span style="font-size:0.85rem;">Telegram Bot: <strong id="opAlertsBotStatus">Checking...</strong></span>
+                    </div>
+                    <div class="table-responsive" style="max-height:320px;overflow-y:auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>Trigger</th>
+                                    <th>Reading vs Limit</th>
+                                    <th>Log</th>
+                                </tr>
+                            </thead>
+                            <tbody id="opAlertsTableBody">
+                                <tr><td colspan="4">Loading alerts...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- TAB 3: DYNAMIC SETTINGS -->
+                <div id="op-tab-settings" class="op-tab-panel" style="display:none;">
+                    <form class="settings-form" id="opSettingsForm">
+                        <div class="form-group">
+                            <label for="opTelegramSelect">Telegram Bot Notifications (Unsafe + Device Offline)</label>
+                            <select id="opTelegramSelect" class="form-control">
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="opMinPhInput">Min Safe pH</label>
+                                <input type="number" step="0.1" id="opMinPhInput" class="form-control" value="6.5" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="opMaxPhInput">Max Safe pH</label>
+                                <input type="number" step="0.1" id="opMaxPhInput" class="form-control" value="8.5" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="opMaxTdsInput">Max Safe TDS (ppm)</label>
+                                <input type="number" step="1" id="opMaxTdsInput" class="form-control" value="500" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="opMaxTurbInput">Max Safe Turbidity (NTU)</label>
+                                <input type="number" step="0.1" id="opMaxTurbInput" class="form-control" value="5.0" required>
+                            </div>
+                        </div>
+                        <div class="form-actions-row">
+                            <button class="btn-primary btn-sm" type="submit"><i class="fas fa-save"></i> Save Configurations</button>
+                            <span id="opSettingsStatus" class="form-status"></span>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- TAB 4: GUARDED CLEAR STORED LOGS -->
+                <div id="op-tab-cleanup" class="op-tab-panel" style="display:none;flex-direction:column;gap:10px;">
+                    <div style="font-size:0.9rem;font-weight:700;color:var(--accent-danger);">
+                        <i class="fas fa-trash-alt"></i> Clear Stored Telemetry Logs
+                    </div>
+                    <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.45;">
+                        Use this before connecting calibrated physical sensors to clear simulated/test logs from Firebase. Enter exact Device ID (<strong>${PRIMARY_DEVICE_ID}</strong>) and solve the verification check.
                     </p>
-                    <div class="form-group">
-                        <label for="opConfirmDeviceInput">Confirm Device ID</label>
-                        <input type="text" id="opConfirmDeviceInput" class="form-control" placeholder="Type ${PRIMARY_DEVICE_ID}" autocomplete="off">
-                    </div>
-                    <div class="form-group">
-                        <label for="opCaptchaInput">Verification Check (<span id="opCaptchaQuestion"></span>)</label>
-                        <input type="number" id="opCaptchaInput" class="form-control" placeholder="Enter sum">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="opConfirmDeviceInput">Confirm Device ID</label>
+                            <input type="text" id="opConfirmDeviceInput" class="form-control" placeholder="Type ${PRIMARY_DEVICE_ID}" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label for="opCaptchaInput">Verification (<span id="opCaptchaQuestion"></span>)</label>
+                            <input type="number" id="opCaptchaInput" class="form-control" placeholder="Enter sum">
+                        </div>
                     </div>
                     <label style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:var(--text-muted);cursor:pointer;">
-                        <input type="checkbox" id="opClearLatestChk"> Also clear <code>latest/${PRIMARY_DEVICE_ID}</code> snapshot
+                        <input type="checkbox" id="opClearLatestChk"> Also reset current latest reading snapshot
                     </label>
-                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <div class="form-actions-row">
                         <button type="button" id="opExecuteClearBtn" class="btn-primary btn-sm" style="background:var(--accent-danger);"><i class="fas fa-broom"></i> Clear Stored Logs</button>
                         <span id="opActionStatus" class="form-status"></span>
                     </div>
@@ -208,6 +304,8 @@ document.addEventListener('DOMContentLoaded', () => {
             overlay.style.display = 'none';
             const st = document.getElementById('opActionStatus');
             if (st) st.innerText = '';
+            const setSt = document.getElementById('opSettingsStatus');
+            if (setSt) setSt.innerText = '';
         };
 
         document.getElementById('closeOperatorModalBtn')?.addEventListener('click', closeModal);
@@ -215,26 +313,71 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.target === overlay) closeModal();
         });
 
-        document.getElementById('opJumpSettingsBtn')?.addEventListener('click', () => {
-            closeModal();
-            openView('settings-view');
+        overlay.querySelectorAll('[data-op-tab]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                overlay.querySelectorAll('[data-op-tab]').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const targetPanel = btn.getAttribute('data-op-tab');
+                overlay.querySelectorAll('.op-tab-panel').forEach(p => {
+                    p.style.display = p.id === targetPanel ? 'flex' : 'none';
+                });
+                if (targetPanel === 'op-tab-alerts') renderOperatorAlerts();
+                if (targetPanel === 'op-tab-device') syncDevicePresenceUI();
+            });
         });
 
-        document.getElementById('opJumpDevicesBtn')?.addEventListener('click', () => {
-            closeModal();
-            openView('devices-view');
-        });
-
-        document.getElementById('opToggleSsidModalBtn')?.addEventListener('click', () => {
+        document.getElementById('opToggleSsidBtn')?.addEventListener('click', () => {
             showSsidUnmasked = !showSsidUnmasked;
             syncDevicePresenceUI();
-            const st = document.getElementById('opActionStatus');
-            if (st) {
-                st.style.color = 'var(--accent-primary)';
-                st.innerText = showSsidUnmasked ? 'SSID unmasked in Device Mgt.' : 'SSID masked in Device Mgt.';
+        });
+
+        // Settings Form inside Operator Modal
+        document.getElementById('opSettingsForm')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const statusEl = document.getElementById('opSettingsStatus');
+            const minPh = Number(document.getElementById('opMinPhInput').value);
+            const maxPh = Number(document.getElementById('opMaxPhInput').value);
+            const maxTds = Number(document.getElementById('opMaxTdsInput').value);
+            const maxTurb = Number(document.getElementById('opMaxTurbInput').value);
+            const telegramEnabled = document.getElementById('opTelegramSelect').value === 'true';
+
+            if (Number.isNaN(minPh) || Number.isNaN(maxPh) || minPh < 0 || maxPh > 14 || minPh >= maxPh) {
+                if (statusEl) {
+                    statusEl.style.color = 'var(--accent-danger)';
+                    statusEl.innerText = 'Invalid pH range (0 <= Min < Max <= 14).';
+                }
+                return;
+            }
+            if (Number.isNaN(maxTds) || maxTds <= 0 || Number.isNaN(maxTurb) || maxTurb <= 0) {
+                if (statusEl) {
+                    statusEl.style.color = 'var(--accent-danger)';
+                    statusEl.innerText = 'TDS and Turbidity limits must be positive.';
+                }
+                return;
+            }
+
+            try {
+                if (statusEl) {
+                    statusEl.style.color = 'var(--text-muted)';
+                    statusEl.innerText = 'Saving to Firebase...';
+                }
+                await window.saveHydroSenseConfig({ minPh, maxPh, maxTds, maxTurb, telegramEnabled });
+                activeConfig = { minPh, maxPh, maxTds, maxTurb, telegramEnabled };
+                renderOperatorAlerts();
+                if (currentData.timestampMs) applyReadingToUI(currentData, false);
+                if (statusEl) {
+                    statusEl.style.color = 'var(--accent-success)';
+                    statusEl.innerText = 'Saved & synced!';
+                }
+            } catch (err) {
+                if (statusEl) {
+                    statusEl.style.color = 'var(--accent-danger)';
+                    statusEl.innerText = `Save failed: ${err.message}`;
+                }
             }
         });
 
+        // Guarded Clear Logs
         document.getElementById('opExecuteClearBtn')?.addEventListener('click', async () => {
             const st = document.getElementById('opActionStatus');
             const typedId = (document.getElementById('opConfirmDeviceInput')?.value || '').trim();
@@ -244,7 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (typedId !== PRIMARY_DEVICE_ID) {
                 if (st) {
                     st.style.color = 'var(--accent-danger)';
-                    st.innerText = `Device ID mismatch. Type exact: ${PRIMARY_DEVICE_ID}`;
+                    st.innerText = `Type exact Device ID: ${PRIMARY_DEVICE_ID}`;
                 }
                 return;
             }
@@ -258,14 +401,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            if (typeof window.clearHydroSenseStoredLogs !== 'function') {
-                if (st) {
-                    st.style.color = 'var(--accent-warning)';
-                    st.innerText = 'Firebase database cleaner not ready.';
-                }
-                return;
-            }
-
             try {
                 if (st) {
                     st.style.color = 'var(--text-muted)';
@@ -273,7 +408,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 await window.clearHydroSenseStoredLogs(PRIMARY_DEVICE_ID, alsoLatest);
                 historyCache = [];
-                csvSelectedRows = [];
                 if (alsoLatest) {
                     currentData = {
                         ...currentData,
@@ -281,6 +415,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ph: null,
                         tds: null,
                         turb: null,
+                        turbidity: null,
                         status: 'WAITING',
                         timestampMs: null,
                         timestamp: null
@@ -294,7 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     syncDevicePresenceUI();
                 }
                 renderTrendsAndLogs();
-                renderAlertsTable();
+                renderOperatorAlerts();
                 const devInput = document.getElementById('opConfirmDeviceInput');
                 if (devInput) devInput.value = '';
                 generateNewCaptcha();
@@ -313,24 +448,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
     buildOperatorModal();
 
-    document.querySelector('.user-profile')?.addEventListener('click', () => {
+    document.getElementById('operatorProfileBtn')?.addEventListener('click', () => {
         buildOperatorModal();
+        populateOperatorSettings(activeConfig);
+        syncDevicePresenceUI();
+        renderOperatorAlerts();
         generateNewCaptcha();
         const overlay = document.getElementById('operatorModalOverlay');
         if (overlay) overlay.style.display = 'flex';
     });
 
-    // 6. Device Presence & Metadata UI
+    function populateOperatorSettings(cfg) {
+        const tgEl = document.getElementById('opTelegramSelect');
+        const minPhEl = document.getElementById('opMinPhInput');
+        const maxPhEl = document.getElementById('opMaxPhInput');
+        const maxTdsEl = document.getElementById('opMaxTdsInput');
+        const maxTurbEl = document.getElementById('opMaxTurbInput');
+
+        if (tgEl) tgEl.value = String(Boolean(cfg.telegramEnabled));
+        if (minPhEl) minPhEl.value = cfg.minPh;
+        if (maxPhEl) maxPhEl.value = cfg.maxPh;
+        if (maxTdsEl) maxTdsEl.value = cfg.maxTds;
+        if (maxTurbEl) maxTurbEl.value = cfg.maxTurb;
+    }
+
+    // 6. Device Presence & Metadata Sync
     function isDeviceOnline() {
         if (!currentData.timestampMs) return false;
         return (Date.now() - currentData.timestampMs) <= MAX_STALE_MS;
-    }
-
-    function formatMaskedSsid(ssid) {
-        if (!ssid) return 'Not reported in payload';
-        if (showSsidUnmasked) return ssid;
-        if (ssid.length <= 2) return `${ssid[0]}*`;
-        return `${ssid.slice(0, 2)}${'*'.repeat(Math.min(8, ssid.length - 2))}`;
     }
 
     function syncDevicePresenceUI() {
@@ -341,49 +486,38 @@ document.addEventListener('DOMContentLoaded', () => {
             liveBadge.innerText = online ? 'Live' : 'Offline';
         }
 
-        const devBadge = document.getElementById('deviceStatusBadge');
-        const lastSeenEl = document.getElementById('deviceLastSeen');
-        const connNoteEl = document.getElementById('deviceConnectionNote');
-        const srcEl = document.getElementById('deviceDataSource');
-        const ipEl = document.getElementById('deviceIpAddress');
-        const ssidEl = document.getElementById('deviceWifiSsid');
-        const rssiEl = document.getElementById('deviceWifiRssi');
-        const latestStatusEl = document.getElementById('deviceLatestStatus');
-        const detectedListEl = document.getElementById('detectedDevicesList');
+        const opBadge = document.getElementById('opDeviceStatusBadge');
+        const opDetected = document.getElementById('opDetectedDevices');
+        const opSrc = document.getElementById('opDeviceSource');
+        const opIp = document.getElementById('opDeviceIp');
+        const opSsid = document.getElementById('opDeviceSsid');
+        const opRssi = document.getElementById('opDeviceRssi');
+        const opSeen = document.getElementById('opDeviceLastSeen');
+        const opConn = document.getElementById('opDeviceConnNote');
 
-        if (devBadge) {
-            devBadge.className = online ? 'status-badge bg-normal ml-auto' : 'status-badge bg-danger ml-auto';
-            devBadge.innerText = online ? 'Online' : 'Offline';
+        if (opBadge) {
+            opBadge.className = online ? 'status-badge bg-normal' : 'status-badge bg-danger';
+            opBadge.innerText = online ? 'Online' : 'Offline';
         }
-        if (lastSeenEl) {
-            lastSeenEl.innerText = currentData.timestamp
-                ? new Date(currentData.timestamp).toLocaleString()
-                : 'Never';
-        }
-        if (connNoteEl) {
+        if (opDetected) opDetected.innerText = detectedDevices.join(', ');
+        if (opSrc) opSrc.innerText = currentData.data_source || '--';
+        if (opIp) opIp.innerText = currentData.ip_address || 'Not reported in payload';
+        if (opSsid) opSsid.innerText = formatMaskedSsid(currentData.wifi_ssid);
+        if (opRssi) opRssi.innerText = currentData.wifi_rssi !== null ? `${currentData.wifi_rssi} dBm` : 'Not reported in payload';
+        if (opSeen) opSeen.innerText = currentData.timestamp ? new Date(currentData.timestamp).toLocaleString() : 'Never';
+        if (opConn) {
             if (!currentData.timestampMs) {
-                connNoteEl.innerText = 'No telemetry received yet';
+                opConn.innerText = 'No telemetry received yet';
             } else if (online) {
-                connNoteEl.innerText = 'Active stream within 30s';
+                opConn.innerText = 'Active stream within 30s';
             } else {
                 const secAgo = Math.round((Date.now() - currentData.timestampMs) / 1000);
-                connNoteEl.innerText = `Offline (last seen ${secAgo}s ago)`;
+                opConn.innerText = `Offline (${secAgo}s ago)`;
             }
         }
-        if (srcEl) srcEl.innerText = currentData.data_source || '--';
-        if (ipEl) ipEl.innerText = currentData.ip_address || 'Not reported in payload';
-        if (ssidEl) ssidEl.innerText = formatMaskedSsid(currentData.wifi_ssid);
-        if (rssiEl) rssiEl.innerText = currentData.wifi_rssi !== null ? `${currentData.wifi_rssi} dBm` : 'Not reported in payload';
-        if (latestStatusEl) latestStatusEl.innerText = currentData.status || '--';
-        if (detectedListEl) detectedListEl.innerText = detectedDevices.join(', ');
 
         renderLiveWorkflow();
     }
-
-    document.getElementById('toggleSsidBtn')?.addEventListener('click', () => {
-        showSsidUnmasked = !showSsidUnmasked;
-        syncDevicePresenceUI();
-    });
 
     window.addEventListener('hydrosense:devices', (e) => {
         if (Array.isArray(e.detail) && e.detail.length) {
@@ -461,7 +595,7 @@ document.addEventListener('DOMContentLoaded', () => {
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
     });
 
-    // Historical Graph (Displays Stored Readings Directly) + Dynamic CSV Count & Size
+    // Historical Graph & Lightweight Recent Logs Table (Top 25 Rows)
     const ctxHist = document.getElementById('historyChart').getContext('2d');
     const historyChart = new Chart(ctxHist, {
         type: 'bar',
@@ -524,20 +658,24 @@ document.addEventListener('DOMContentLoaded', () => {
         return rows;
     }
 
-    function renderHistoryLogsTable(rows) {
+    function renderHistoryLogsTable(csvRows) {
         const tbody = document.getElementById('historyLogsTableBody');
-        const countEl = document.getElementById('filteredLogCount');
-        if (countEl) countEl.innerText = String(historyCache.length);
+        const totalEl = document.getElementById('filteredLogCount');
+        const visibleEl = document.getElementById('visibleLogCount');
+        if (totalEl) totalEl.innerText = String(historyCache.length);
         if (!tbody) return;
 
         if (!historyCache.length) {
+            if (visibleEl) visibleEl.innerText = '0';
             tbody.innerHTML = '<tr><td colspan="8">No Firebase records available.</td></tr>';
             updateCsvButtonMeta([]);
             return;
         }
 
-        const newestFirst = [...historyCache].reverse().slice(0, 150);
-        tbody.innerHTML = newestFirst.map(item => {
+        const recentSlice = [...historyCache].reverse().slice(0, TABLE_PREVIEW_LIMIT);
+        if (visibleEl) visibleEl.innerText = String(recentSlice.length);
+
+        tbody.innerHTML = recentSlice.map(item => {
             const dtStr = new Date(item.timestampMs).toLocaleString();
             const badgeCls = item.status === 'POTABLE' ? 'bg-normal' : 'bg-danger';
             return `<tr>
@@ -552,11 +690,11 @@ document.addEventListener('DOMContentLoaded', () => {
             </tr>`;
         }).join('');
 
-        updateCsvButtonMeta(rows);
+        updateCsvButtonMeta(csvRows);
     }
 
     function renderTrendsAndLogs() {
-        csvSelectedRows = getCsvExportRows();
+        const csvRows = getCsvExportRows();
         const metric = document.getElementById('trendMetricSelect')?.value || 'ph';
         const colorMap = {
             ph: '#a855f7',
@@ -565,7 +703,7 @@ document.addEventListener('DOMContentLoaded', () => {
             temp: '#0ea5e9'
         };
 
-        const chartSubset = historyCache.slice(-60);
+        const chartSubset = historyCache.slice(-30);
         historyChart.data.labels = chartSubset.map(item => {
             const d = new Date(item.timestampMs);
             return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -575,7 +713,7 @@ document.addEventListener('DOMContentLoaded', () => {
         historyChart.data.datasets[0].backgroundColor = colorMap[metric] || '#0ea5e9';
         historyChart.update();
 
-        renderHistoryLogsTable(csvSelectedRows);
+        renderHistoryLogsTable(csvRows);
     }
 
     document.getElementById('trendMetricSelect')?.addEventListener('change', renderTrendsAndLogs);
@@ -635,10 +773,10 @@ document.addEventListener('DOMContentLoaded', () => {
         URL.revokeObjectURL(url);
     });
 
-    // Alerts Table
-    function renderAlertsTable() {
-        const tbody = document.getElementById('alertsTableBody');
-        const botLabel = document.getElementById('alertsBotStatusLabel');
+    // Operator Alerts Log Renderer
+    function renderOperatorAlerts() {
+        const tbody = document.getElementById('opAlertsTableBody');
+        const botLabel = document.getElementById('opAlertsBotStatus');
         if (botLabel) {
             botLabel.innerText = activeConfig.telegramEnabled ? 'Enabled' : 'Disabled';
             botLabel.style.color = activeConfig.telegramEnabled ? 'var(--accent-success)' : 'var(--accent-warning)';
@@ -652,7 +790,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 violations.push({
                     trigger: 'pH Out of Limit',
                     actual: `${item.ph} pH`,
-                    limit: `${activeConfig.minPh} - ${activeConfig.maxPh} pH`,
+                    limit: `${activeConfig.minPh} - ${activeConfig.maxPh}`,
                     badge: 'bg-danger'
                 });
             }
@@ -660,7 +798,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 violations.push({
                     trigger: 'High TDS',
                     actual: `${item.tds} ppm`,
-                    limit: `<= ${activeConfig.maxTds} ppm`,
+                    limit: `<= ${activeConfig.maxTds}`,
                     badge: 'bg-warning'
                 });
             }
@@ -668,42 +806,40 @@ document.addEventListener('DOMContentLoaded', () => {
                 violations.push({
                     trigger: 'High Turbidity',
                     actual: `${item.turbidity} NTU`,
-                    limit: `<= ${activeConfig.maxTurb} NTU`,
+                    limit: `<= ${activeConfig.maxTurb}`,
                     badge: 'bg-warning'
                 });
             }
             if (!violations.length && item.status !== 'POTABLE') {
                 violations.push({
-                    trigger: 'Non-Potable Reading',
+                    trigger: 'Non-Potable',
                     actual: `pH ${item.ph}, TDS ${item.tds}, Turb ${item.turbidity}`,
-                    limit: `pH ${activeConfig.minPh}-${activeConfig.maxPh}, TDS <=${activeConfig.maxTds}, Turb <=${activeConfig.maxTurb}`,
+                    limit: 'Configured limits',
                     badge: 'bg-danger'
                 });
             }
 
-            violations.forEach(v => {
-                alerts.push({ timestampMs: item.timestampMs, ...v });
-            });
+            violations.forEach(v => alerts.push({ timestampMs: item.timestampMs, ...v }));
         });
 
         alerts.sort((a, b) => b.timestampMs - a.timestampMs);
 
         if (!alerts.length) {
-            tbody.innerHTML = '<tr><td colspan="4">No threshold violations recorded under current limits.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4">No threshold violations recorded.</td></tr>';
             return;
         }
 
-        tbody.innerHTML = alerts.slice(0, 100).map(al => `
+        tbody.innerHTML = alerts.slice(0, 30).map(al => `
             <tr>
                 <td>${new Date(al.timestampMs).toLocaleString()}</td>
                 <td><span class="status-badge ${al.badge}">${al.trigger}</span></td>
-                <td>Actual: ${al.actual} | Limit: ${al.limit}</td>
-                <td><i class="fas fa-database icon-cyan"></i> Logged in Firebase</td>
+                <td>${al.actual} (Limit: ${al.limit})</td>
+                <td>Firebase</td>
             </tr>
         `).join('');
     }
 
-    // Live System Workflow Renderer
+    // Live System Workflow Renderer (Sensor Unreachable when ESP32 Offline)
     function setNodeState(nodeId, badgeId, stateType, badgeText) {
         const node = document.getElementById(nodeId);
         const badge = document.getElementById(badgeId);
@@ -718,7 +854,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-function renderLiveWorkflow() {
+    function renderLiveWorkflow() {
         const diagMsg = document.getElementById('simDiagnosticMsg');
         const c1 = document.getElementById('conn-1');
         const c2 = document.getElementById('conn-2');
@@ -735,8 +871,8 @@ function renderLiveWorkflow() {
             setNodeState('node-rules', 'flowBadgeRules', 'warn', 'Standby');
             setNodeState('node-firebase', 'flowBadgeFirebase', 'ok', 'Connected');
             setNodeState('node-ui-alert', 'flowBadgeAlert', 'ok', activeConfig.telegramEnabled ? 'UI + Bot Ready' : 'UI Only');
-            if (c1) c1.classList.add('connector-broken');
-            if (c2) c2.classList.add('connector-broken');
+            c1?.classList.add('connector-broken');
+            c2?.classList.add('connector-broken');
             if (diagMsg) diagMsg.innerText = 'Firebase RTDB is connected; waiting for sensor telemetry.';
             return;
         }
@@ -747,8 +883,8 @@ function renderLiveWorkflow() {
             setNodeState('node-rules', 'flowBadgeRules', 'warn', `Last: ${currentData.status}`);
             setNodeState('node-firebase', 'flowBadgeFirebase', 'ok', 'Cached');
             setNodeState('node-ui-alert', 'flowBadgeAlert', 'warn', 'Device Offline');
-            if (c1) c1.classList.add('connector-broken');
-            if (c2) c2.classList.add('connector-broken');
+            c1?.classList.add('connector-broken');
+            c2?.classList.add('connector-broken');
 
             const secAgo = Math.round((Date.now() - currentData.timestampMs) / 1000);
             if (diagMsg) {
@@ -757,7 +893,6 @@ function renderLiveWorkflow() {
             return;
         }
 
-        // Device is genuinely Online (within 30s)
         setNodeState('node-sensors', 'flowBadgeSensors', 'ok', 'Reporting');
         setNodeState('node-esp32', 'flowBadgeEsp', 'ok', 'Online');
         setNodeState('node-rules', 'flowBadgeRules', isPotable ? 'ok' : 'fault', isPotable ? 'Within Limits' : 'Exceeds Limit');
@@ -766,19 +901,6 @@ function renderLiveWorkflow() {
 
         if (diagMsg) {
             diagMsg.innerText = `ESP32 is online (last reading ${new Date(currentData.timestampMs).toLocaleTimeString()}); status is ${currentData.status}.`;
-        }
-    }
-
-    function updateKpiStatus(elementId, isSafe, trigger = null) {
-        const el = document.getElementById(elementId);
-        if (!el) return;
-        const statusEl = el.querySelector('.kpi-status');
-        if (isSafe) {
-            statusEl.className = 'kpi-status status-normal';
-            statusEl.innerText = 'Within Safe Limit';
-        } else {
-            statusEl.className = 'kpi-status status-critical';
-            statusEl.innerText = trigger ? `Alert: ${trigger}` : 'Out of Limit';
         }
     }
 
@@ -816,12 +938,18 @@ function renderLiveWorkflow() {
     }
 
     function applyReadingToUI(data, appendToCharts = true) {
+        const safeTemp = Number.isFinite(Number(data.temp)) ? Number(data.temp) : 0;
+        const safePh = Number.isFinite(Number(data.ph)) ? Number(data.ph) : 0;
+        const safeTds = Number.isFinite(Number(data.tds)) ? Number(data.tds) : 0;
+        const safeTurb = Number.isFinite(Number(data.turbidity)) ? Number(data.turbidity) : 0;
+
         currentData = {
             device_id: data.device_id || PRIMARY_DEVICE_ID,
-            temp: data.temp,
-            ph: data.ph,
-            tds: data.tds,
-            turb: data.turbidity,
+            temp: safeTemp,
+            ph: safePh,
+            tds: safeTds,
+            turb: safeTurb,
+            turbidity: safeTurb,
             status: data.status,
             timestampMs: data.timestampMs,
             timestamp: data.timestamp,
@@ -831,14 +959,23 @@ function renderLiveWorkflow() {
             wifi_rssi: data.wifi_rssi !== null && data.wifi_rssi !== undefined ? data.wifi_rssi : currentData.wifi_rssi
         };
 
-        document.getElementById('val-temp').innerText = data.temp;
-        document.getElementById('val-ph').innerText = data.ph;
-        document.getElementById('val-tds').innerText = data.tds;
-        document.getElementById('val-turb').innerText = data.turbidity;
+        document.getElementById('val-temp').innerText = safeTemp;
+        document.getElementById('val-ph').innerText = safePh;
+        document.getElementById('val-tds').innerText = safeTds;
+        document.getElementById('val-turb').innerText = safeTurb;
 
-        const phOk = data.ph >= activeConfig.minPh && data.ph <= activeConfig.maxPh;
-        const tdsOk = data.tds <= activeConfig.maxTds;
-        const turbOk = data.turbidity <= activeConfig.maxTurb;
+        const repTemp = document.getElementById('repLastTemp');
+        const repPh = document.getElementById('repLastPh');
+        const repTds = document.getElementById('repLastTds');
+        const repTurb = document.getElementById('repLastTurb');
+        if (repTemp) repTemp.innerText = `${safeTemp.toFixed(1)} °C`;
+        if (repPh) repPh.innerText = `${safePh.toFixed(2)}`;
+        if (repTds) repTds.innerText = `${Math.round(safeTds)} ppm`;
+        if (repTurb) repTurb.innerText = `${safeTurb.toFixed(2)} NTU`;
+
+        const phOk = safePh >= activeConfig.minPh && safePh <= activeConfig.maxPh;
+        const tdsOk = safeTds <= activeConfig.maxTds;
+        const turbOk = safeTurb <= activeConfig.maxTurb;
         const overallPotable = data.status === 'POTABLE' && phOk && tdsOk && turbOk;
 
         const wqiLabel = document.getElementById('wqiLabelTxt');
@@ -847,20 +984,14 @@ function renderLiveWorkflow() {
 
         if (overallPotable) {
             wqiLabel.style.color = 'var(--accent-success)';
-            if (wqiSub) wqiSub.innerText = 'All parameters within limits';
+            if (wqiSub) wqiSub.innerText = 'Within configured limits';
             wqiDoughnut.data.datasets[0].backgroundColor = ['#22c55e', '#1e293b'];
             wqiDoughnut.data.datasets[0].data = [100, 0];
-            ['card-temp', 'card-ph', 'card-tds', 'card-turb'].forEach(id => updateKpiStatus(id, true));
         } else {
             wqiLabel.style.color = 'var(--accent-danger)';
-            if (wqiSub) wqiSub.innerText = 'One or more limits exceeded';
+            if (wqiSub) wqiSub.innerText = 'Limit exceeded';
             wqiDoughnut.data.datasets[0].backgroundColor = ['#ef4444', '#1e293b'];
             wqiDoughnut.data.datasets[0].data = [100, 0];
-
-            updateKpiStatus('card-temp', true);
-            updateKpiStatus('card-ph', phOk, `pH ${activeConfig.minPh}-${activeConfig.maxPh}`);
-            updateKpiStatus('card-tds', tdsOk, `TDS <=${activeConfig.maxTds}`);
-            updateKpiStatus('card-turb', turbOk, `Turb <=${activeConfig.maxTurb}`);
         }
         wqiDoughnut.update();
         syncDevicePresenceUI();
@@ -872,105 +1003,31 @@ function renderLiveWorkflow() {
         if (term) {
             const p = document.createElement('p');
             p.className = overallPotable ? 'term-line data' : 'term-line alert';
-            p.innerText = `> [${timeStr}] FIREBASE_SYNC [${data.device_id}]: {"temp":${data.temp}, "ph":${data.ph}, "tds":${data.tds}, "turb":${data.turbidity}} -> ${overallPotable ? 'POTABLE' : 'NON-POTABLE'}`;
+            p.innerText = `> [${timeStr}] FIREBASE_SYNC [${data.device_id}]: {"temp":${safeTemp}, "ph":${safePh}, "tds":${safeTds}, "turb":${safeTurb}} -> ${overallPotable ? 'POTABLE' : 'NON-POTABLE'}`;
             term.appendChild(p);
-            if (term.childElementCount > 120) term.removeChild(term.firstChild);
+            if (term.childElementCount > 100) term.removeChild(term.firstChild);
             term.scrollTop = term.scrollHeight;
         }
 
         if (appendToCharts) {
-            pushMiniPoint(miniTemp, data.temp);
-            pushMiniPoint(miniPh, data.ph);
-            pushMiniPoint(miniTds, data.tds);
-            pushMiniPoint(miniTurb, data.turbidity);
-            pushMainPoint(data, timeStr);
+            pushMiniPoint(miniTemp, safeTemp);
+            pushMiniPoint(miniPh, safePh);
+            pushMiniPoint(miniTds, safeTds);
+            pushMiniPoint(miniTurb, safeTurb);
+            pushMainPoint({ temp: safeTemp, ph: safePh, tds: safeTds }, timeStr);
         }
     }
 
-    // 8. Dynamic Config Listener & Form Submit
-    const settingsForm = document.getElementById('settingsForm');
-    const settingsStatus = document.getElementById('settingsSaveStatus');
-
-    function populateSettingsForm(cfg) {
-        const tgEl = document.getElementById('telegramEnabledSelect');
-        const minPhEl = document.getElementById('minPhInput');
-        const maxPhEl = document.getElementById('maxPhInput');
-        const maxTdsEl = document.getElementById('maxTdsInput');
-        const maxTurbEl = document.getElementById('maxTurbInput');
-
-        if (tgEl) tgEl.value = String(Boolean(cfg.telegramEnabled));
-        if (minPhEl) minPhEl.value = cfg.minPh;
-        if (maxPhEl) maxPhEl.value = cfg.maxPh;
-        if (maxTdsEl) maxTdsEl.value = cfg.maxTds;
-        if (maxTurbEl) maxTurbEl.value = cfg.maxTurb;
-    }
-    populateSettingsForm(activeConfig);
-
+    // 8. Dynamic Config Listener
     window.addEventListener('hydrosense:config', (e) => {
         if (!e.detail) return;
         activeConfig = { ...activeConfig, ...e.detail };
-        populateSettingsForm(activeConfig);
-        renderAlertsTable();
+        populateOperatorSettings(activeConfig);
+        renderOperatorAlerts();
         if (currentData.timestampMs) {
             applyReadingToUI(currentData, false);
         }
     });
-
-    if (settingsForm) {
-        settingsForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const minPh = Number(document.getElementById('minPhInput').value);
-            const maxPh = Number(document.getElementById('maxPhInput').value);
-            const maxTds = Number(document.getElementById('maxTdsInput').value);
-            const maxTurb = Number(document.getElementById('maxTurbInput').value);
-            const telegramEnabled = document.getElementById('telegramEnabledSelect').value === 'true';
-
-            if (Number.isNaN(minPh) || Number.isNaN(maxPh) || minPh < 0 || maxPh > 14 || minPh >= maxPh) {
-                if (settingsStatus) {
-                    settingsStatus.style.color = 'var(--accent-danger)';
-                    settingsStatus.innerText = 'Invalid pH range: ensure 0 <= Min pH < Max pH <= 14.';
-                }
-                return;
-            }
-            if (Number.isNaN(maxTds) || maxTds <= 0 || Number.isNaN(maxTurb) || maxTurb <= 0) {
-                if (settingsStatus) {
-                    settingsStatus.style.color = 'var(--accent-danger)';
-                    settingsStatus.innerText = 'TDS and Turbidity limits must be positive numbers.';
-                }
-                return;
-            }
-
-            if (typeof window.saveHydroSenseConfig !== 'function') {
-                if (settingsStatus) {
-                    settingsStatus.style.color = 'var(--accent-warning)';
-                    settingsStatus.innerText = 'Firebase config writer not ready yet.';
-                }
-                return;
-            }
-
-            try {
-                if (settingsStatus) {
-                    settingsStatus.style.color = 'var(--text-muted)';
-                    settingsStatus.innerText = 'Saving to Firebase...';
-                }
-                await window.saveHydroSenseConfig({ minPh, maxPh, maxTds, maxTurb, telegramEnabled });
-                activeConfig = { minPh, maxPh, maxTds, maxTurb, telegramEnabled };
-                renderAlertsTable();
-                if (currentData.timestampMs) {
-                    applyReadingToUI(currentData, false);
-                }
-                if (settingsStatus) {
-                    settingsStatus.style.color = 'var(--accent-success)';
-                    settingsStatus.innerText = 'Saved & synced to Firebase!';
-                }
-            } catch (err) {
-                if (settingsStatus) {
-                    settingsStatus.style.color = 'var(--accent-danger)';
-                    settingsStatus.innerText = `Save failed: ${err.message}`;
-                }
-            }
-        });
-    }
 
     // 9. Listen to Firebase History Event
     window.addEventListener('hydrosense:history', (e) => {
@@ -1006,7 +1063,7 @@ function renderLiveWorkflow() {
         }
 
         renderTrendsAndLogs();
-        renderAlertsTable();
+        renderOperatorAlerts();
         syncDevicePresenceUI();
     });
 
@@ -1021,72 +1078,275 @@ function renderLiveWorkflow() {
         applyReadingToUI(data, !isFirstLoad);
     });
 
-    // 11. Report Generation (PDF Export — Without Confidence Score)
-    window.generateReport = function () {
-        const period = document.getElementById('reportPeriod').value;
-        const signatoryName = document.getElementById('reportSignatoryName').value;
-        const signatoryDesig = document.getElementById('reportSignatoryDesig').value;
+    // 11. Analytical PDF Report Generation (Min / Mean / Max / Latest + Sample Log, No Range Mention)
+    function computeMetricStats(records, key, decimals = 2) {
+        const nums = records
+            .map(r => Number(r[key]))
+            .filter(v => Number.isFinite(v));
+        if (!nums.length) {
+            return { min: '--', avg: '--', max: '--', latest: '--' };
+        }
+        const min = Math.min(...nums);
+        const max = Math.max(...nums);
+        const avg = nums.reduce((acc, v) => acc + v, 0) / nums.length;
+        const latest = nums[nums.length - 1];
+        return {
+            min: min.toFixed(decimals),
+            avg: avg.toFixed(decimals),
+            max: max.toFixed(decimals),
+            latest: latest.toFixed(decimals),
+            latestNum: latest
+        };
+    }
+
+    // Helper to load logo image into dataURL for jsPDF header
+    function loadLogoDataUrl(src) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth || 120;
+                    canvas.height = img.naturalHeight || 120;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    resolve(canvas.toDataURL('image/png'));
+                } catch (_) {
+                    resolve(null);
+                }
+            };
+            img.onerror = () => resolve(null);
+            img.src = src;
+        });
+    }
+
+    // 11. Sensor-Based Report (Recent Reading Analysis, Logo, Potable/Non-Potable, No Range, Non-Clinical/Non-Chemical Notice)
+    window.generateReport = async function () {
+        const JsPdfCtor =
+            window.jspdf?.jsPDF ||
+            window.jsPDF ||
+            window.html2pdf?.jsPDF ||
+            (typeof html2pdf !== 'undefined' ? html2pdf.jsPDF : null);
+
+        if (!JsPdfCtor) {
+            alert('PDF library not loaded yet. Please refresh and try again.');
+            return;
+        }
+
+        const reviewerName = (document.getElementById('reportSignatoryName')?.value || 'Operator').trim();
+
+        const hasLiveReading = currentData.timestampMs !== null && Number.isFinite(Number(currentData.ph));
+        const recent = hasLiveReading
+            ? currentData
+            : (historyCache.length ? historyCache[historyCache.length - 1] : null);
+
+        if (!recent) {
+            alert('No sensor reading available yet to generate the report.');
+            return;
+        }
+
+        const tempVal = Number(recent.temp ?? 0);
+        const phVal = Number(recent.ph ?? 0);
+        const tdsVal = Number(recent.tds ?? 0);
+        const turbVal = Number(recent.turbidity ?? recent.turb ?? 0);
+
+        // Analyze recent sensor reading to determine POTABLE / NON-POTABLE and reasons
+        const phOut = phVal < activeConfig.minPh || phVal > activeConfig.maxPh;
+        const tdsHigh = tdsVal > activeConfig.maxTds;
+        const turbHigh = turbVal > activeConfig.maxTurb;
+        const isPotable = !phOut && !tdsHigh && !turbHigh;
+        const verdict = isPotable ? 'POTABLE' : 'NON-POTABLE';
+
+        const findings = [];
+        if (turbHigh) {
+            findings.push(`Turbidity is measured at ${turbVal.toFixed(2)} NTU, indicating higher suspended particles or cloudiness in the recent water sample.`);
+        } else {
+            findings.push(`Turbidity is measured at ${turbVal.toFixed(2)} NTU, reflecting lower suspended particle cloudiness in the recent sample.`);
+        }
+
+        if (tdsHigh) {
+            findings.push(`TDS is measured at ${Math.round(tdsVal)} ppm, indicating a higher concentration of dissolved solids/minerals in the recent sample.`);
+        } else {
+            findings.push(`TDS is measured at ${Math.round(tdsVal)} ppm, reflecting the dissolved mineral/ionic load present in the recent sample.`);
+        }
+
+        if (phOut) {
+            findings.push(
+                phVal < activeConfig.minPh
+                    ? `pH is measured at ${phVal.toFixed(2)}, leaning toward the acidic side compared to neutral pH 7.0.`
+                    : `pH is measured at ${phVal.toFixed(2)}, leaning toward the alkaline side compared to neutral pH 7.0.`
+            );
+        } else {
+            findings.push(`pH is measured at ${phVal.toFixed(2)}, close to the neutral pH 7.0 reference.`);
+        }
+
+        findings.push(`Water temperature at the time of reading is ${tempVal.toFixed(1)} °C.`);
+
+        const logoDataUrl = await loadLogoDataUrl('./assets/college_logo.png');
+
+        const doc = new JsPdfCtor({ unit: 'pt', format: 'a4' });
+        const pageW = doc.internal.pageSize.getWidth();
+        const marginX = 46;
+        const contentW = pageW - marginX * 2;
+        let y = 34;
 
         const now = new Date();
-        document.getElementById('pdfDate').innerText = 'Generated: ' + now.toLocaleString();
+        const docId = `HS-${String(now.getTime()).slice(-6)}`;
 
-        let periodText = 'Last 24 Hours';
-        if (period === '1W') periodText = 'Last 7 Days';
-        if (period === '1M') periodText = 'Last 30 Days';
-        document.getElementById('pdfPeriod').innerText = periodText;
+        // Header Banner with Logo
+        doc.setFillColor(15, 23, 42);
+        doc.rect(0, 0, pageW, 84, 'F');
 
-        document.getElementById('pdfSign').innerText = signatoryName;
-        document.getElementById('pdfNameOut').innerText = signatoryName;
-        document.getElementById('pdfDesigOut').innerText = signatoryDesig;
+        let textStartX = marginX;
+        if (logoDataUrl) {
+            try {
+                doc.setFillColor(255, 255, 255);
+                doc.roundedRect(marginX, 16, 52, 52, 6, 6, 'F');
+                doc.addImage(logoDataUrl, 'PNG', marginX + 4, 20, 44, 44);
+                textStartX = marginX + 64;
+            } catch (_) {
+                textStartX = marginX;
+            }
+        }
 
-        const phVal = currentData.ph ?? '--';
-        const tdsVal = currentData.tds ?? '--';
-        const turbVal = currentData.turb ?? '--';
-        const tempVal = currentData.temp ?? '--';
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.text('HYDROSENSE 2.0', textStartX, 38);
 
-        const isSafePh = typeof currentData.ph === 'number' && currentData.ph >= activeConfig.minPh && currentData.ph <= activeConfig.maxPh;
-        const isSafeTds = typeof currentData.tds === 'number' && currentData.tds <= activeConfig.maxTds;
-        const isSafeTurb = typeof currentData.turb === 'number' && currentData.turb <= activeConfig.maxTurb;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9.5);
+        doc.setTextColor(186, 230, 253);
+        doc.text('Sensor Telemetry Analysis', textStartX, 56);
 
-        document.getElementById('pdfTableBody').innerHTML = `
-            <tr>
-                <td style="padding:12px; border:1px solid #ccc;">Temperature</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${tempVal} °C</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center;">15.0 - 35.0 °C</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:green; font-weight:bold;">Recorded</td>
-            </tr>
-            <tr>
-                <td style="padding:12px; border:1px solid #ccc;">pH Level</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${phVal} pH</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center;">${activeConfig.minPh} - ${activeConfig.maxPh}</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafePh ? 'green' : 'red'}; font-weight:bold;">${isSafePh ? 'Safe' : 'Alert'}</td>
-            </tr>
-            <tr>
-                <td style="padding:12px; border:1px solid #ccc;">TDS (Total Dissolved Solids)</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${tdsVal} ppm</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center;">&le; ${activeConfig.maxTds} ppm</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafeTds ? 'green' : 'orange'}; font-weight:bold;">${isSafeTds ? 'Safe' : 'Alert'}</td>
-            </tr>
-            <tr>
-                <td style="padding:12px; border:1px solid #ccc;">Turbidity</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; font-weight:bold;">${turbVal} NTU</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center;">&le; ${activeConfig.maxTurb} NTU</td>
-                <td style="padding:12px; border:1px solid #ccc; text-align:center; color:${isSafeTurb ? 'green' : 'orange'}; font-weight:bold;">${isSafeTurb ? 'Safe' : 'Alert'}</td>
-            </tr>
-        `;
+        doc.setFontSize(8.5);
+        doc.setTextColor(226, 232, 240);
+        doc.text(`Report ID: ${docId}`, pageW - marginX, 34, { align: 'right' });
+        doc.text(`Generated: ${now.toLocaleString()}`, pageW - marginX, 49, { align: 'right' });
+        doc.text(`Name: ${reviewerName}`, pageW - marginX, 64, { align: 'right' });
 
-        const vEl = document.getElementById('pdfVerdict');
-        vEl.innerText = currentData.status || 'WAITING';
-        vEl.style.color = currentData.status === 'POTABLE' ? 'green' : 'red';
+        y = 108;
 
-        const element = document.getElementById('reportTemplate');
-        const opt = {
-            margin: 0,
-            filename: `HydroSense_Report_${now.getTime()}.pdf`,
-            image: { type: 'jpeg', quality: 1.0 },
-            html2canvas: { scale: 2, useCORS: true, logging: false },
-            jsPDF: { unit: 'px', format: [794, 1123], orientation: 'portrait' }
-        };
-        html2pdf().set(opt).from(element).save();
+        // Verdict Banner
+        doc.setFillColor(isPotable ? 240 : 254, isPotable ? 253 : 242, isPotable ? 244 : 242);
+        doc.setDrawColor(isPotable ? 34 : 239, isPotable ? 197 : 68, isPotable ? 94 : 68);
+        doc.roundedRect(marginX, y, contentW, 56, 6, 6, 'FD');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(71, 85, 105);
+        doc.text('RECENT READING ASSESSMENT', marginX + 14, y + 19);
+
+        doc.setFontSize(15);
+        doc.setTextColor(isPotable ? 21 : 185, isPotable ? 128 : 28, isPotable ? 61 : 28);
+        doc.text(verdict, marginX + 14, y + 41);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(51, 65, 85);
+        const readingTime = recent.timestampMs ? new Date(recent.timestampMs).toLocaleString() : now.toLocaleString();
+        doc.text(`Reading Time: ${readingTime}`, pageW - marginX - 14, y + 32, { align: 'right' });
+
+        y += 78;
+
+        // Recent Sensor Readings Table (No Ranges)
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(15, 23, 42);
+        doc.text('1. Recent Sensor Readings', marginX, y);
+        y += 10;
+
+        const cols = [
+            { label: 'Sensor Parameter', w: contentW * 0.55, align: 'left' },
+            { label: 'Recent Reading', w: contentW * 0.45, align: 'right' }
+        ];
+
+        doc.setFillColor(30, 41, 59);
+        doc.rect(marginX, y, contentW, 24, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.text(cols[0].label, marginX + 10, y + 15);
+        doc.text(cols[1].label, pageW - marginX - 10, y + 15, { align: 'right' });
+        y += 24;
+
+        const rows = [
+            ['Temperature', `${tempVal.toFixed(1)} °C`],
+            ['pH', `${phVal.toFixed(2)}`],
+            ['TDS', `${Math.round(tdsVal)} ppm`],
+            ['Turbidity', `${turbVal.toFixed(2)} NTU`]
+        ];
+
+        rows.forEach((r, idx) => {
+            doc.setFillColor(idx % 2 === 0 ? 255 : 248, idx % 2 === 0 ? 255 : 250, idx % 2 === 0 ? 255 : 252);
+            doc.rect(marginX, y, contentW, 24, 'F');
+            doc.setDrawColor(226, 232, 240);
+            doc.rect(marginX, y, contentW, 24, 'S');
+
+            doc.setTextColor(15, 23, 42);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9.5);
+            doc.text(r[0], marginX + 10, y + 15);
+
+            doc.setFont('helvetica', 'bold');
+            doc.text(r[1], pageW - marginX - 10, y + 15, { align: 'right' });
+            y += 24;
+        });
+
+        y += 22;
+
+        // Analysis & Observations
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(15, 23, 42);
+        doc.text('2. Reading Analysis & Observations', marginX, y);
+        y += 14;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9.5);
+        doc.setTextColor(30, 41, 59);
+
+        findings.forEach((line) => {
+            const wrapped = doc.splitTextToSize(`• ${line}`, contentW - 8);
+            doc.text(wrapped, marginX + 4, y);
+            y += wrapped.length * 13.5 + 5;
+        });
+
+        y += 10;
+
+        // Non-Clinical / Non-Chemical Verification Notice
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(148, 163, 184);
+        doc.roundedRect(marginX, y, contentW, 56, 5, 5, 'FD');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text('Verification & Scope Notice', marginX + 12, y + 16);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(51, 65, 85);
+        const noticeText = 'This report, including all calculations and the potability verdict, is derived solely from recent electronic sensor readings and is not clinically or chemically verified through laboratory testing.';
+        const wrappedNotice = doc.splitTextToSize(noticeText, contentW - 24);
+        doc.text(wrappedNotice, marginX + 12, y + 31);
+
+        // Footer: Digital Document Notice
+        const footerY = doc.internal.pageSize.getHeight() - 56;
+        doc.setDrawColor(203, 213, 225);
+        doc.line(marginX, footerY - 10, pageW - marginX, footerY - 10);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text('This is a digitally generated report; no physical signature is required.', marginX, footerY + 4);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(71, 85, 105);
+        doc.text(`Name: ${reviewerName}`, pageW - marginX, footerY + 4, { align: 'right' });
+
+        doc.save(`HydroSense_Report_${docId}.pdf`);
     };
 });
