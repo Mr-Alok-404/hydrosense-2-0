@@ -88,9 +88,10 @@ latest_reading = {
 }
 history_readings = []
 
+_presence_lock = threading.Lock()
 _presence_state = {
     "last_seen_epoch": None,
-    "last_seen_str": None,
+    "last_seen_utc": None,
     "device_id": "HYDRO_ESP32_01",
     "offline_notified": False,
 }
@@ -100,21 +101,27 @@ def _offline_watchdog_loop():
     """Monitors telemetry gap and sends a distinct Telegram alert once when ESP32 goes offline."""
     while True:
         time.sleep(5)
-        last_epoch = _presence_state["last_seen_epoch"]
-        if last_epoch is None:
+        with _presence_lock:
+            last_epoch = _presence_state["last_seen_epoch"]
+            already_notified = _presence_state["offline_notified"]
+            device_id = _presence_state["device_id"]
+            last_seen_utc = _presence_state["last_seen_utc"]
+
+        if last_epoch is None or already_notified:
             continue
 
         gap = int(time.time() - last_epoch)
-        if gap > OFFLINE_TIMEOUT_SECONDS and not _presence_state["offline_notified"]:
+        if gap > OFFLINE_TIMEOUT_SECONDS:
             _, telegram_enabled = get_remote_config_and_alerts()
             sent = send_device_offline_alert(
-                device_id=_presence_state["device_id"],
-                last_seen_str=_presence_state["last_seen_str"] or "Unknown",
+                device_id=device_id,
+                last_seen_str=last_seen_utc or "Unknown",
                 offline_seconds=gap,
                 enabled=telegram_enabled,
             )
             if sent:
-                _presence_state["offline_notified"] = True
+                with _presence_lock:
+                    _presence_state["offline_notified"] = True
 
 
 _watchdog_thread = threading.Thread(target=_offline_watchdog_loop, daemon=True)
@@ -146,6 +153,8 @@ def normalize_payload(data: dict) -> dict:
         thresholds=thresholds,
     )
 
+    now_utc = datetime.now(timezone.utc)
+
     return {
         "device_id": str(data.get("device_id", "HYDRO_ESP32_01")),
         "data_source": str(data.get("data_source", "SIMULATED")),
@@ -159,7 +168,7 @@ def normalize_payload(data: dict) -> dict:
         "message": eval_result["message"],
         "prediction_source": eval_result["prediction_source"],
         "ml_enabled": ml_flag,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": now_utc.isoformat(),
     }
 
 
@@ -201,7 +210,7 @@ def ingest_data():
         "prediction_source": record["prediction_source"],
         "ml_enabled": record["ml_enabled"],
         "data_source": record["data_source"],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": record["timestamp"],
     }
 
     try:
@@ -214,15 +223,15 @@ def ingest_data():
         }), 500
 
     now_epoch = time.time()
-    was_offline = _presence_state["offline_notified"]
-    prev_epoch = _presence_state["last_seen_epoch"]
-    downtime_sec = int(now_epoch - prev_epoch) if (was_offline and prev_epoch is not None) else None
+    with _presence_lock:
+        was_offline = _presence_state["offline_notified"]
+        prev_epoch = _presence_state["last_seen_epoch"]
+        downtime_sec = int(now_epoch - prev_epoch) if (was_offline and prev_epoch is not None) else None
 
-    # Update presence state on fresh reading
-    _presence_state["last_seen_epoch"] = now_epoch
-    _presence_state["last_seen_str"] = record["timestamp"]
-    _presence_state["device_id"] = record["device_id"]
-    _presence_state["offline_notified"] = False
+        _presence_state["last_seen_epoch"] = now_epoch
+        _presence_state["last_seen_utc"] = record["timestamp"]
+        _presence_state["device_id"] = record["device_id"]
+        _presence_state["offline_notified"] = False
 
     _, telegram_enabled = get_remote_config_and_alerts()
 
