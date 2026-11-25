@@ -895,7 +895,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         setNodeState('node-sensors', 'flowBadgeSensors', 'ok', 'Reporting');
         setNodeState('node-esp32', 'flowBadgeEsp', 'ok', 'Online');
-        setNodeState('node-rules', 'flowBadgeRules', isPotable ? 'ok' : 'fault', isPotable ? 'Within Limits' : 'Exceeds Limit');
+        setNodeState('node-rules', 'flowBadgeRules', isPotable ? 'ok' : 'fault', isPotable ? 'Potable' : 'Non-Potable');
         setNodeState('node-firebase', 'flowBadgeFirebase', 'ok', 'Synced');
         setNodeState('node-ui-alert', 'flowBadgeAlert', isPotable ? 'ok' : 'warn', activeConfig.telegramEnabled ? 'UI + Bot Ready' : 'UI Only');
 
@@ -1213,7 +1213,7 @@ document.addEventListener('DOMContentLoaded', () => {
         doc.setTextColor(255, 255, 255);
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(16);
-        doc.text('HYDROSENSE 2.0', textStartX, 38);
+        doc.text('PPD - 2', textStartX, 38);
 
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(9.5);
